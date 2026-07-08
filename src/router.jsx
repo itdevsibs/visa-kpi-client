@@ -1,12 +1,22 @@
-import { Route, Routes } from "react-router-dom";
-import Login from "./pages/login/Login";
+import { Routes, Route, Navigate } from "react-router-dom";
 
-const Router = () => {
+import Login from "./pages/login/Login";
+import Dashboard from "./pages/Dashboard";
+
+export default function Router() {
   return (
     <Routes>
-      <Route path="/" element={<Login />} />
+      {/* Redirect localhost:5173 -> /login */}
+      <Route path="/" element={<Navigate to="/login" replace />} />
+
+      {/* Login */}
+      <Route path="/login" element={<Login />} />
+
+      {/* Dashboard */}
+      <Route path="/dashboard" element={<Dashboard />} />
+
+      {/* 404 */}
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
-};
-
-export default Router;
+}
