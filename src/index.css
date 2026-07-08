@@ -288,6 +288,82 @@
 }
 
 /* =========================
+   PREMIUM MICRO-ANIMATIONS
+========================= */
+
+/* Shimmer / Skeleton Loading */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Gradient Shift (for hero cards) */
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* Gentle Float */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+
+/* Subtle Breathe (for status indicators) */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+/* Slide Up Fade */
+@keyframes slide-up-fade {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Slide Down Fade */
+@keyframes slide-down-fade {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Scale Pop In */
+@keyframes scale-pop-in {
+  0% { opacity: 0; transform: scale(0.9); }
+  60% { transform: scale(1.03); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* Draw Line (for progress bars) */
+@keyframes draw-line {
+  from { width: 0%; }
+  to { width: var(--target-width, 100%); }
+}
+
+/* Glow Pulse (for active states) */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+  50% { box-shadow: 0 0 20px 4px rgba(59, 130, 246, 0.15); }
+}
+
+/* Count Ticker (number flip) */
+@keyframes ticker-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Ripple effect */
+@keyframes ripple {
+  to { transform: scale(4); opacity: 0; }
+}
+
+/* Marquee scroll */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* =========================
    UTILITIES
 ========================= */
 @layer utilities {
@@ -301,6 +377,112 @@
 
   .animate-sibs-pulse {
     animation: sibs-pulse 1.5s ease-in-out infinite;
+  }
+
+  /* ── Premium Animation Utilities ── */
+  .animate-shimmer {
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+  }
+
+  .animate-gradient-shift {
+    background-size: 200% 200%;
+    animation: gradient-shift 6s ease infinite;
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .animate-breathe {
+    animation: breathe 2.5s ease-in-out infinite;
+  }
+
+  .animate-slide-up-fade {
+    animation: slide-up-fade 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-slide-down-fade {
+    animation: slide-down-fade 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-scale-pop-in {
+    animation: scale-pop-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  .animate-draw-line {
+    animation: draw-line 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-glow-pulse {
+    animation: glow-pulse 2s ease-in-out infinite;
+  }
+
+  .animate-ticker-up {
+    animation: ticker-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .animate-marquee {
+    animation: marquee 20s linear infinite;
+  }
+
+  /* ── Stagger Delay Cascade ── */
+  .stagger-1 { animation-delay: 0.05s; }
+  .stagger-2 { animation-delay: 0.1s; }
+  .stagger-3 { animation-delay: 0.15s; }
+  .stagger-4 { animation-delay: 0.2s; }
+  .stagger-5 { animation-delay: 0.25s; }
+  .stagger-6 { animation-delay: 0.3s; }
+  .stagger-7 { animation-delay: 0.35s; }
+  .stagger-8 { animation-delay: 0.4s; }
+
+  /* ── Glassmorphism ── */
+  .glass {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+  }
+
+  .glass-dark {
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(16px) saturate(200%);
+    -webkit-backdrop-filter: blur(16px) saturate(200%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  /* ── Premium Card Hover ── */
+  .card-hover-lift {
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+                box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .card-hover-lift:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px -12px rgba(4, 44, 81, 0.12),
+                0 8px 16px -8px rgba(4, 44, 81, 0.08);
+  }
+
+  /* ── Smooth Interactive States ── */
+  .interactive-press {
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+  .interactive-press:active {
+    transform: scale(0.97);
+    opacity: 0.9;
+  }
+
+  /* ── Gradient Text ── */
+  .text-gradient {
+    background: linear-gradient(135deg, #042c51, #4b9dfe);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* ── Progress bar fill animation ── */
+  .progress-fill {
+    transition: width 1s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .no-scrollbar {
@@ -488,6 +670,29 @@
   background: transparent;
 }
 
+.sibs-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sibs-primary-1) transparent;
+}
+
+.sibs-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.sibs-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sibs-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: var(--sibs-primary-1);
+}
+
+.sibs-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--sibs-tertiary-3);
+}
+
 /* =========================
    REUSABLE COMPONENTS
 ========================= */
@@ -536,8 +741,40 @@
     box-shadow: 0 8px 22px rgba(4, 44, 81, 0.04);
   }
 
+  /* --- Added for KPI/Dashboard Refactoring --- */
+  .sibs-stat-card {
+    @apply rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-200;
+  }
+
+  .sibs-chart-container {
+    @apply w-full border border-slate-100 p-4 rounded-xl bg-white shadow-[0_2px_8px_rgb(0,0,0,0.02)];
+  }
+
+  .sibs-filter-input {
+    @apply border border-slate-200 px-3 py-2 rounded-xl text-slate-700 outline-none text-sm font-medium focus:border-blue-500 focus:ring-1 focus:ring-blue-500 bg-white min-h-[40px] transition-colors;
+  }
+
+  .sibs-section-label {
+    @apply text-[11px] font-bold text-slate-500 uppercase tracking-wider font-sans;
+  }
+
+  .sibs-metric-value {
+    @apply text-xl font-black text-slate-900 font-sans tracking-tight mt-1;
+  }
+
+  .sibs-action-btn {
+    @apply px-4 py-2 rounded-xl font-medium text-sm transition-all cursor-pointer flex items-center justify-center gap-2;
+  }
+  /* ------------------------------------------- */
+
   .sibs-icon-box {
     @apply flex items-center justify-center rounded-xl bg-sibs-primary-1 text-white;
+  }
+
+  /* Fix micro-typography for better legibility */
+  .text-\[9px\], .text-\[10px\], .text-\[11px\] {
+    font-size: 0.75rem !important;
+    line-height: 1rem !important;
   }
 }
 
