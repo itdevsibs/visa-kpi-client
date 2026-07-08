@@ -13,15 +13,19 @@
     "@base-ui/react": "^1.6.0",
     "@fontsource-variable/geist": "^5.2.9",
     "@tailwindcss/vite": "^4.3.2",
+    "@types/papaparse": "^5.5.2",
     "axios": "^1.18.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dom": "^0.0.3",
+    "framer-motion": "^12.42.2",
     "lucide": "^1.23.0",
     "lucide-react": "^1.23.0",
+    "papaparse": "^5.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
+    "recharts": "^3.9.2",
     "router": "^2.2.0",
     "shadcn": "^4.13.0",
     "tailwind-merge": "^3.6.0",
@@ -38,6 +42,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.7.0",
+    "sucrase": "^3.35.1",
     "vite": "^8.1.1"
   }
 }

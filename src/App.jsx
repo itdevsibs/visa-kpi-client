@@ -1,13 +1,11 @@
+import AppShell from "./AppShell.jsx";
+import Router from "./router.jsx";
+import "./index.css";
 
-import AppShell from "./AppShell";
-import Router from "./router";
-
-function App() {
+export default function App() {
   return (
     <AppShell>
       <Router />
     </AppShell>
   );
 }
-
-export default App;
