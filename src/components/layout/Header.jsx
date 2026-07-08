@@ -27,21 +27,36 @@ const Header = () => {
         <button
           onClick={handleLogout}
           className="
+            group
             flex
             items-center
             gap-2
             rounded-xl
-            bg-red-500/90
+            border
+            border-white/20
+            bg-white/10
             px-4
             py-2
             font-medium
             text-white
+            backdrop-blur-xl
             transition-all
             duration-300
-            hover:bg-red-600
+            hover:border-[#FF5C28]/60
+            hover:bg-[#FF5C28]/90
+            hover:shadow-lg
+            hover:shadow-orange-500/20
           "
         >
-          <LogOut size={18} />
+          <LogOut
+            size={18}
+            className="
+              transition-transform
+              duration-300
+              group-hover:-translate-x-1
+            "
+          />
+
           Logout
         </button>
 
