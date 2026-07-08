@@ -6,7 +6,7 @@ const DashboardPage = lazy(() => import("./pages/dashboard/DashboardPage.jsx"));
 const PerformancePage = lazy(() => import("./pages/dashboard/employeeperformance/PerformancePage.jsx"));
 const SettingsPage = lazy(() => import("./pages/dashboard/settings/SettingsPage.jsx"));
 
-const Router = () => {
+export default function Router() {
   return (
     <Suspense fallback={<div className="flex h-full w-full items-center justify-center p-8"><div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600"></div></div>}>
       <Routes>
@@ -18,6 +18,4 @@ const Router = () => {
       </Routes>
     </Suspense>
   );
-};
-
-export default Router;
+}

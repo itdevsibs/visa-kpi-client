@@ -1,40 +1,128 @@
+// src/lib/axios/api-template.js
+
 import axios from "axios";
 
-// Setup base configuration for the Axios client
-const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "/api",
-  timeout: 10000,
+/* ==========================================
+   BASE URL
+========================================== */
+
+const BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:5000";
+
+/* ==========================================
+   STORAGE KEYS
+========================================== */
+
+const TOKEN_KEY = "token";
+const USER_KEY = "user";
+
+/* ==========================================
+   PUBLIC ROUTES
+========================================== */
+
+const PUBLIC_ROUTES = ["/", "/login"];
+
+/* ==========================================
+   HELPERS
+========================================== */
+
+function isPublicRoute() {
+  if (typeof window === "undefined") return false;
+
+  return PUBLIC_ROUTES.includes(window.location.pathname);
+}
+
+export function saveAuth(token, user) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function getUser() {
+  const user = localStorage.getItem(USER_KEY);
+
+  if (!user) return null;
+
+  try {
+    return JSON.parse(user);
+  } catch {
+    return null;
+  }
+}
+
+export function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+export function isAuthenticated() {
+  return !!getToken();
+}
+
+export function handleLogout() {
+  clearAuth();
+
+  if (!isPublicRoute()) {
+    window.location.replace("/login");
+  }
+}
+
+/* ==========================================
+   AXIOS INSTANCE
+========================================== */
+
+const api = axios.create({
+  baseURL: `${BASE_URL}/api`,
   headers: {
     "Content-Type": "application/json",
   },
 });
 
-// Interceptor for attaching auth tokens (if any)
-apiClient.interceptors.request.use(
+/* ==========================================
+   REQUEST INTERCEPTOR
+========================================== */
+
+api.interceptors.request.use(
   (config) => {
-    // const token = localStorage.getItem("AUTH_TOKEN");
-    // if (token) {
-    //   config.headers.Authorization = `Bearer ${token}`;
-    // }
+    const token = getToken();
+
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    if (config.method?.toLowerCase() === "get") {
+      config.params = {
+        ...(config.params || {}),
+        _t: Date.now(),
+      };
+
+      config.headers["Cache-Control"] = "no-cache";
+      config.headers["Pragma"] = "no-cache";
+    }
+
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-// Interceptor for handling global errors (like 401 Unauthorized)
-apiClient.interceptors.response.use(
-  (response) => {
-    return response;
-  },
+/* ==========================================
+   RESPONSE INTERCEPTOR
+========================================== */
+
+api.interceptors.response.use(
+  (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Handle unauthorized (e.g., redirect to login, clear local storage)
-      console.error("Unauthorized access, redirecting to login...");
+    const status = error.response?.status;
+
+    if ((status === 401 || status === 403) && !isPublicRoute()) {
+      handleLogout();
     }
+
     return Promise.reject(error);
   }
 );
 
-export default apiClient;
+export default api;
