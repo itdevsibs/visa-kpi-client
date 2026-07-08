@@ -1,22 +1,21 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import React, { Suspense, lazy } from "react";
+import { Route, Routes, Navigate } from "react-router-dom";
 
-import Login from "./pages/login/Login";
-import Dashboard from "./pages/Dashboard";
+const Login = lazy(() => import("./pages/login/Login.jsx"));
+const DashboardPage = lazy(() => import("./pages/dashboard/DashboardPage.jsx"));
+const PerformancePage = lazy(() => import("./pages/dashboard/employeeperformance/PerformancePage.jsx"));
+const SettingsPage = lazy(() => import("./pages/dashboard/settings/SettingsPage.jsx"));
 
 export default function Router() {
   return (
-    <Routes>
-      {/* Redirect localhost:5173 -> /login */}
-      <Route path="/" element={<Navigate to="/login" replace />} />
-
-      {/* Login */}
-      <Route path="/login" element={<Login />} />
-
-      {/* Dashboard */}
-      <Route path="/dashboard" element={<Dashboard />} />
-
-      {/* 404 */}
-      <Route path="*" element={<Navigate to="/login" replace />} />
-    </Routes>
+    <Suspense fallback={<div className="flex h-full w-full items-center justify-center p-8"><div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600"></div></div>}>
+      <Routes>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/performance" element={<PerformancePage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+      </Routes>
+    </Suspense>
   );
 }

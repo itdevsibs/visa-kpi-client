@@ -1,175 +1,142 @@
-import { useState } from "react";
+import React from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useRoster } from "../../../services/context/RosterContext";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
   Users,
-  Settings,
-  FileText,
-  ChevronLeft,
-  ChevronRight,
+  Settings as SettingsIcon,
+  Zap
 } from "lucide-react";
-import { NavLink } from "react-router-dom";
 
-const menus = [
-  {
-    title: "Dashboard",
-    icon: LayoutDashboard,
-    path: "/dashboard",
-  },
-  {
-    title: "Employees",
-    icon: Users,
-    path: "/employees",
-  },
-  {
-    title: "Visa Records",
-    icon: FileText,
-    path: "/visa-records",
-  },
-  {
-    title: "Settings",
-    icon: Settings,
-    path: "/settings",
-  },
-];
+const sidebarItemVariants = {
+  hidden: { opacity: 0, x: -12 },
+  visible: (i) => ({
+    opacity: 1, x: 0,
+    transition: { delay: i * 0.06, duration: 0.35, ease: [0.22, 1, 0.36, 1] }
+  })
+};
 
-const Sidebar = () => {
-  const [collapsed, setCollapsed] = useState(false);
+const Sidebar = ({ isSidebarOpen }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { userRole, setNotification } = useRoster();
+
+  const navItems = [
+    { name: "Executive Dashboard", path: "/dashboard", icon: LayoutDashboard },
+    { name: "Employee Performance", path: "/performance", icon: Users },
+  ];
 
   return (
     <aside
-      className={`
-        relative
-        h-screen
-        shrink-0
-        border-r
-        border-white/10
-        bg-white/10
-        backdrop-blur-2xl
-        transition-all
-        duration-300
-        ${
-          collapsed
-            ? "w-20"
-            : "w-72"
-        }
-      `}
+      className={`${
+        isSidebarOpen ? "w-64" : "w-20"
+      } transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] bg-white border-r border-slate-200/80 flex flex-col z-30 shrink-0 h-screen overflow-hidden sticky top-0`}
     >
-      {/* Logo */}
-
-      <div className="flex h-20 items-center justify-between border-b border-white/10 px-5">
-
-        <div
-          className={`flex items-center gap-3 ${
-            collapsed
-              ? "justify-center w-full"
-              : ""
-          }`}
-        >
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-r from-blue-600 to-orange-500 text-lg font-bold text-white shadow-lg">
-            US
-          </div>
-
-          {!collapsed && (
+      {/* Brand */}
+      <div className="h-16 flex items-center justify-between px-4 border-b border-slate-100 shrink-0">
+        {isSidebarOpen && (
+          <motion.div
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="flex items-center gap-2.5"
+          >
+            <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white p-2 rounded-xl flex items-center justify-center font-bold tracking-tight shadow-md font-mono text-sm leading-none border border-blue-500/30 animate-glow-pulse">
+              US
+            </div>
             <div>
-              <h2 className="text-lg font-bold text-white">
-                US VISA KPI
-              </h2>
-
-              <p className="text-xs text-white/60">
-                Dashboard
+              <h2 className="font-bold text-sm tracking-tight text-slate-900 font-sans uppercase leading-tight">US Visa Account</h2>
+              <p className="text-[10px] text-slate-400 font-mono tracking-wider leading-tight flex items-center gap-1">
+                <Zap className="h-2.5 w-2.5 text-amber-500" />KPI ENGINE
               </p>
             </div>
-          )}
-        </div>
-
-        {!collapsed && (
-          <button
-            onClick={() => setCollapsed(true)}
-            className="rounded-lg p-2 text-white/70 transition hover:bg-white/10 hover:text-white"
-          >
-            <ChevronLeft size={18} />
-          </button>
+          </motion.div>
         )}
-
-        {collapsed && (
-          <button
-            onClick={() => setCollapsed(false)}
-            className="absolute -right-4 top-6 flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-orange-500 text-white shadow-lg"
+        {!isSidebarOpen && (
+          <motion.div
+            initial={{ scale: 0.85, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            className="bg-gradient-to-br from-blue-600 to-blue-700 text-white p-2 rounded-xl flex items-center justify-center font-bold tracking-tight shadow-md font-mono text-sm leading-none border border-blue-500/30 mx-auto"
           >
-            <ChevronRight size={16} />
-          </button>
+            US
+          </motion.div>
         )}
       </div>
 
-      {/* Menu */}
-
-      <nav className="mt-5 space-y-2 px-3">
-        {menus.map((menu) => {
-          const Icon = menu.icon;
-
+      {/* Navigation */}
+      <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto thin-scroll">
+        {navItems.map((item, i) => {
+          const isActive = location.pathname === item.path || (location.pathname === '/' && item.path === '/dashboard');
           return (
-            <NavLink
-              key={menu.path}
-              to={menu.path}
-              className={({ isActive }) =>
-                `
-                  group
-                  flex
-                  items-center
-                  gap-4
-                  rounded-2xl
-                  px-4
-                  py-3
-                  transition-all
-                  duration-300
-
-                  ${
-                    isActive
-                      ? "bg-gradient-to-r from-blue-600 to-orange-500 text-white shadow-lg"
-                      : "text-white/70 hover:bg-white/10 hover:text-white"
-                  }
-
-                  ${
-                    collapsed
-                      ? "justify-center"
-                      : ""
-                  }
-                `
-              }
+            <motion.div
+              key={item.path}
+              custom={i}
+              variants={sidebarItemVariants}
+              initial="hidden"
+              animate="visible"
             >
-              <Icon size={22} />
-
-              {!collapsed && (
-                <span className="font-medium">
-                  {menu.title}
-                </span>
-              )}
-            </NavLink>
+              <Link
+                to={item.path}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 interactive-press ${
+                  isActive
+                    ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md shadow-blue-600/25 font-medium"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900 hover:shadow-sm"
+                }`}
+                title={!isSidebarOpen ? item.name : undefined}
+              >
+                <item.icon className={`w-4 h-4 shrink-0 ${isActive ? 'animate-scale-pop-in' : ''}`} />
+                {isSidebarOpen && <span className="text-sm">{item.name}</span>}
+              </Link>
+            </motion.div>
           );
         })}
+
+        <motion.div
+          custom={2}
+          variants={sidebarItemVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          <button
+            onClick={() => {
+              if (userRole === 'Employee' || userRole === 'Team Leader') {
+                setNotification(`Access Denied: Settings are restricted to Operations Managers and Administrators.`);
+                setTimeout(() => setNotification(null), 3000);
+                return;
+              }
+              navigate('/settings');
+            }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 interactive-press ${
+              userRole === 'Employee' || userRole === 'Team Leader' 
+                ? 'opacity-40 cursor-not-allowed text-slate-400' 
+                : location.pathname === '/settings' 
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md shadow-blue-600/25 font-medium' 
+                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 hover:shadow-sm'
+            }`}
+            title={userRole === 'Employee' || userRole === 'Team Leader' ? 'Restricted Access' : 'Administration Settings'}
+          >
+            <SettingsIcon className={`w-4 h-4 shrink-0 ${location.pathname === '/settings' ? 'animate-[spin_3s_linear_infinite]' : ''}`} />
+            {isSidebarOpen && <span className="text-sm">Administration</span>}
+          </button>
+        </motion.div>
       </nav>
 
-      {/* Footer */}
-
-      <div className="absolute bottom-5 left-0 w-full px-4">
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center backdrop-blur-xl">
-          {!collapsed ? (
-            <>
-              <p className="text-xs text-white/50">
-                SiBS US VISA KPI
-              </p>
-
-              <p className="mt-1 text-sm font-semibold text-white">
-                Version 1.0.0
-              </p>
-            </>
-          ) : (
-            <p className="text-xs text-white/50">
-              v1
-            </p>
-          )}
-        </div>
-      </div>
+      {/* Sidebar Footer */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="p-4 border-t border-slate-100 text-[10px] text-slate-400 font-mono text-center shrink-0"
+          >
+            © 2026 US Visa Intranet<br/>v1.4.0 (Live Proxy)
+          </motion.div>
+        )}
+      </AnimatePresence>
     </aside>
   );
 };
