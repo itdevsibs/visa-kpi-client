@@ -4,7 +4,7 @@ import { useRoster } from "../../../services/context/RosterContext.jsx";
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../../components/ui/button.jsx";
 
 import {
@@ -19,9 +19,19 @@ import {
   Upload,
   X,
   FileSpreadsheet,
+  Plus,
 } from "lucide-react";
 
 import * as XLSX from "xlsx";
+
+import {
+  bulkUpsertUsVisaKpiEmployees,
+  createUsVisaKpiEmployee,
+  getUsVisaKpiEmployees,
+  importOfficialUsVisaRoster,
+  syncUsVisaKpiEmployeesFromKpi,
+  updateUsVisaKpiEmployee,
+} from "../../../services/api/usVisaKpiSettingsApi.js";
 
 import BaseModal from "../../../components/modals/BaseModal.jsx";
 import SettingsHeader from "../../../components/settings/SettingsHeader.jsx";
@@ -33,16 +43,48 @@ const DEFAULT_TASK_ORDER_OPTIONS = [
   "GSS 2.0 TO12 - SEASIA",
 ];
 
+
+const createEmptyEmployeeForm = () => ({
+  id: `emp_${Date.now()}`,
+  employee_uid: `emp_${Date.now()}`,
+  employee_id: "",
+  employee_number: "",
+  employee_name: "",
+  email: "",
+  position: "",
+  department: "US Visa Operations",
+  team: "",
+  supervisor: "",
+  account_name: "US Visa",
+
+  status: "Active",
+  employment_status: "Active",
+
+  task_order: "",
+  assigned_sub_account: "",
+  herodash: "",
+  msd: "",
+
+  include_dashboard: true,
+  include_reports: true,
+  kpi_tracking_enabled: true,
+
+  aliases: [],
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+});
+
+
 export default function SettingsPage() {
   const { employees, setEmployees, syncLogs, setSyncLogs, userRole } =
     useRoster();
 
   const taskOrderFileRef = useRef(null);
+  const officialRosterFileRef = useRef(null);
 
   const [isSyncing, setIsSyncing] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTeamFilter, setSelectedTeamFilter] = useState("all");
   const [selectedStatusFilter, setSelectedStatusFilter] = useState("all");
   const [managementPage, setManagementPage] = useState(1);
   const [managementPageSize] = useState(10);
@@ -54,6 +96,12 @@ export default function SettingsPage() {
   const [selectedEmpIds, setSelectedEmpIds] = useState([]);
   const [selectedAuditLog, setSelectedAuditLog] = useState(null);
   const [notification, setNotification] = useState(null);
+  const [isAddEmployeeOpen, setIsAddEmployeeOpen] = useState(false);
+  const [newEmployee, setNewEmployee] = useState(createEmptyEmployeeForm);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [isKpiSyncing, setIsKpiSyncing] = useState(false);
+  const [isOfficialRosterImporting, setIsOfficialRosterImporting] = useState(false);
 
   const [uploadLogs, setUploadLogs] = useState([
     {
@@ -77,6 +125,28 @@ export default function SettingsPage() {
     setTimeout(() => setNotification(null), duration);
   };
 
+  const fetchBackendEmployees = useCallback(async () => {
+    try {
+      setSettingsLoading(true);
+
+      const backendEmployees = await getUsVisaKpiEmployees();
+
+      if (backendEmployees.length > 0) {
+        setEmployees(backendEmployees);
+      }
+    } catch (error) {
+      console.error(error);
+      handleToast(error.message || "Unable to load backend employee settings.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, [setEmployees]);
+
+  useEffect(() => {
+    fetchBackendEmployees();
+  }, [fetchBackendEmployees]);
+
+
   const isUsVisaEmployee = (emp) => {
     const accountName = String(emp.account_name || "US Visa").toLowerCase();
     return accountName.includes("us visa");
@@ -94,16 +164,9 @@ export default function SettingsPage() {
     return emp.msd || emp.MSD || "";
   };
 
-  const teams = useMemo(() => {
-    const set = new Set(
-      (employees || [])
-        .filter(isUsVisaEmployee)
-        .map((e) => e.team)
-        .filter(Boolean)
-    );
-
-    return Array.from(set);
-  }, [employees]);
+  const getDisplaySibId = (emp) => {
+    return emp.employee_id || emp.employee_number || "Unassigned";
+  };
 
   const taskOrderOptions = useMemo(() => {
     const set = new Set(DEFAULT_TASK_ORDER_OPTIONS);
@@ -238,7 +301,7 @@ export default function SettingsPage() {
     const rows =
       usVisaEmployees.length > 0
         ? usVisaEmployees.map((emp) => ({
-            "SIB ID": emp.employee_id || emp.employee_number || emp.id || "",
+            "SIB ID": emp.employee_id || emp.employee_number || "",
             "Agent Name": emp.employee_name || "",
             "Task Order": getTaskOrder(emp),
             HeroDash: getHeroDash(emp),
@@ -430,6 +493,117 @@ export default function SettingsPage() {
     reader.readAsArrayBuffer(file);
   };
 
+  const handleImportOfficialRoster = (event) => {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    const name = file.name.toLowerCase();
+    const isAllowed =
+      name.endsWith(".xlsx") || name.endsWith(".xls") || name.endsWith(".csv");
+
+    if (!isAllowed) {
+      handleToast("Invalid file type. Upload only .xlsx, .xls, or .csv files.");
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = async (readerEvent) => {
+      try {
+        setIsOfficialRosterImporting(true);
+
+        const arrayBuffer = readerEvent.target?.result;
+        const workbook = XLSX.read(arrayBuffer, {
+          type: "array",
+        });
+        const firstSheetName = workbook.SheetNames[0];
+
+        if (!firstSheetName) {
+          handleToast("No worksheet found in this official roster file.");
+          return;
+        }
+
+        const worksheet = workbook.Sheets[firstSheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet, {
+          defval: "",
+          raw: false,
+        });
+
+        if (!rows.length) {
+          handleToast("No official roster rows found in the file.");
+          return;
+        }
+
+        const result = await importOfficialUsVisaRoster({
+          rows,
+          deactivateMissing: true,
+        });
+
+        const backendEmployees = result.employees || [];
+        const summary = result.summary || {};
+
+        setEmployees(backendEmployees);
+        setManagementPage(1);
+        setSelectedStatusFilter("all");
+
+        setUploadLogs((prev) => [
+          {
+            id: `official_roster_upload_${Date.now()}`,
+            fileName: file.name,
+            uploadedBy: "Administrator",
+            timestamp: new Date().toLocaleString([], {
+              year: "numeric",
+              month: "short",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            status: summary.skipped > 0 ? "Warning" : "Success",
+            records: summary.totalRows || rows.length,
+            added: summary.added || 0,
+            updated: summary.updated || 0,
+            skipped: summary.skipped || 0,
+          },
+          ...prev,
+        ]);
+
+        const newLog = {
+          id: `official_roster_import_${Date.now()}`,
+          date: new Date().toISOString().split("T")[0],
+          time: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          performedBy: "Administrator",
+          result: "Success",
+          details: `Imported official US Visa roster. Added ${summary.added || 0}, updated ${summary.updated || 0}, deactivated ${summary.deactivated || 0}, skipped ${summary.skipped || 0}.`,
+          summary: {
+            retrieved: summary.officialRows || 0,
+            added: summary.added || 0,
+            updated: summary.updated || 0,
+            markedInactive: summary.deactivated || 0,
+          },
+        };
+
+        setSyncLogs((prev) => [newLog, ...(prev || [])]);
+
+        handleToast(
+          `Official roster imported. Added: ${summary.added || 0}, Updated: ${summary.updated || 0}, Deactivated: ${summary.deactivated || 0}.`
+        );
+      } catch (error) {
+        console.error(error);
+        handleToast(error.message || "Unable to import official roster.");
+      } finally {
+        setIsOfficialRosterImporting(false);
+        event.target.value = "";
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+  };
+
   const filteredEmployees = useMemo(() => {
     return (employees || []).filter((emp) => {
       if (!isUsVisaEmployee(emp)) return false;
@@ -450,15 +624,12 @@ export default function SettingsPage() {
         herodash.includes(query) ||
         msd.includes(query);
 
-      const matchesTeam =
-        selectedTeamFilter === "all" || emp.team === selectedTeamFilter;
-
       const matchesStatus =
         selectedStatusFilter === "all" || emp.status === selectedStatusFilter;
 
-      return matchesSearch && matchesTeam && matchesStatus;
+      return matchesSearch && matchesStatus;
     });
-  }, [employees, searchQuery, selectedTeamFilter, selectedStatusFilter]);
+  }, [employees, searchQuery, selectedStatusFilter]);
 
   const sortedEmployees = useMemo(() => {
     const sorted = [...filteredEmployees];
@@ -533,29 +704,204 @@ export default function SettingsPage() {
     );
   };
 
-  const handleSaveAssignments = () => {
-    handleToast("Task order assignments successfully saved.");
+  const handleSaveAssignments = async () => {
+    if (!hasAdminAccess) {
+      handleToast("Access Denied: Administrative permissions required.");
+      return;
+    }
+
+    try {
+      setSettingsSaving(true);
+      const usVisaEmployees = (employees || []).filter(isUsVisaEmployee);
+      const result = await bulkUpsertUsVisaKpiEmployees(usVisaEmployees);
+
+      setEmployees(result.employees);
+      handleToast(
+        `Task order assignments saved. Added: ${result.summary?.added ?? 0}, Updated: ${result.summary?.updated ?? 0}, Skipped: ${result.summary?.skipped ?? 0}.`
+      );
+    } catch (error) {
+      console.error(error);
+      handleToast(error.message || "Unable to save task order assignments.");
+    } finally {
+      setSettingsSaving(false);
+    }
   };
 
-  const handleSaveEmployeeConfig = (updatedEmp) => {
+  const handleSaveEmployeeConfig = async (updatedEmp) => {
     const timestamp = new Date().toISOString();
 
-    setEmployees((prev) =>
-      (prev || []).map((emp) =>
-        emp.id === updatedEmp.id
-          ? {
-              ...updatedEmp,
-              updated_at: timestamp,
-              assigned_sub_account: updatedEmp.task_order || "",
-              sub_account_assigned_at:
-                updatedEmp.task_order_assigned_at || timestamp,
-            }
-          : emp
-      )
-    );
+    const employeePayload = {
+      ...updatedEmp,
+      updated_at: timestamp,
+      assigned_sub_account: updatedEmp.task_order || "",
+      sub_account_assigned_at:
+        updatedEmp.task_order_assigned_at || timestamp,
+    };
 
-    setEditingEmployee(null);
-    handleToast(`Successfully updated ${updatedEmp.employee_name}.`);
+    try {
+      setSettingsSaving(true);
+      const savedEmployee = await updateUsVisaKpiEmployee(
+        updatedEmp.employee_uid || updatedEmp.id,
+        employeePayload
+      );
+
+      setEmployees((prev) =>
+        (prev || []).map((emp) =>
+          emp.id === updatedEmp.id || emp.employee_uid === updatedEmp.employee_uid
+            ? savedEmployee
+            : emp
+        )
+      );
+
+      setEditingEmployee(null);
+      handleToast(`Successfully updated ${savedEmployee.employee_name}.`);
+    } catch (error) {
+      console.error(error);
+      handleToast(error.message || "Unable to update this employee.");
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+
+  const handleAddEmployee = async () => {
+    if (!hasAdminAccess) {
+      handleToast("Access Denied: Only Administrators can add employees.");
+      return;
+    }
+
+    const employeeName = String(newEmployee.employee_name || "").trim();
+    const employeeId = String(newEmployee.employee_id || "").trim();
+    const email = String(newEmployee.email || "").trim().toLowerCase();
+
+    if (!employeeName) {
+      handleToast("Employee name is required.");
+      return;
+    }
+
+    if (!employeeId) {
+      handleToast("SIB ID is required.");
+      return;
+    }
+
+    try {
+      setSettingsSaving(true);
+
+      const savedEmployee = await createUsVisaKpiEmployee({
+        ...newEmployee,
+        id: newEmployee.employee_uid || newEmployee.id || `emp_${Date.now()}`,
+        employee_uid: newEmployee.employee_uid || newEmployee.id || `emp_${Date.now()}`,
+        employee_id: employeeId,
+        employee_number: employeeId,
+        employee_name: employeeName,
+        email,
+        account_name: "US Visa",
+        employment_status:
+          newEmployee.status === "Inactive" ? "Inactive" : "Active",
+        assigned_sub_account: newEmployee.task_order || "",
+      });
+
+      setEmployees((prev) => [savedEmployee, ...(prev || [])]);
+
+      setUploadLogs((prev) => [
+        {
+          id: `manual_add_${Date.now()}`,
+          fileName: "Manual Employee Add",
+          uploadedBy: "Administrator",
+          timestamp: new Date().toLocaleString([], {
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          status: "Success",
+          records: 1,
+          added: 1,
+          updated: 0,
+          skipped: 0,
+        },
+        ...prev,
+      ]);
+
+      setIsAddEmployeeOpen(false);
+      setNewEmployee(createEmptyEmployeeForm());
+      setManagementPage(1);
+      handleToast(`Successfully added ${savedEmployee.employee_name}.`);
+    } catch (error) {
+      console.error(error);
+      handleToast(error.message || "Unable to add this employee.");
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+
+  const handleSyncEmployeesFromKpi = async () => {
+    if (!hasAdminAccess) {
+      handleToast("Access Denied: Only Administrators can sync KPI employees.");
+      return;
+    }
+
+    try {
+      setIsKpiSyncing(true);
+
+      const result = await syncUsVisaKpiEmployeesFromKpi();
+      const backendEmployees = result.employees || [];
+      const summary = result.summary || {};
+
+      setEmployees(backendEmployees);
+      setManagementPage(1);
+
+      const newLog = {
+        id: `kpi_employee_sync_${Date.now()}`,
+        date: new Date().toISOString().split("T")[0],
+        time: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        performedBy: "Administrator",
+        result: "Success",
+        details: `Synced official employee settings from KPI summary date ${summary.selectedDate || "latest"}. Added ${summary.added || 0}, matched ${summary.matched || 0}, skipped ${summary.skipped || 0}.`,
+        summary: {
+          retrieved: summary.sourceAgents || 0,
+          added: summary.added || 0,
+          updated: summary.matched || 0,
+          markedInactive: 0,
+        },
+      };
+
+      setSyncLogs((prev) => [newLog, ...(prev || [])]);
+      setUploadLogs((prev) => [
+        {
+          id: `kpi_employee_sync_upload_${Date.now()}`,
+          fileName: "KPI Summary Employee Sync",
+          uploadedBy: "Administrator",
+          timestamp: new Date().toLocaleString([], {
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          status: "Success",
+          records: summary.sourceAgents || 0,
+          added: summary.added || 0,
+          updated: summary.matched || 0,
+          skipped: summary.skipped || 0,
+        },
+        ...prev,
+      ]);
+
+      handleToast(
+        `KPI employee sync completed. Added: ${summary.added || 0}, Matched: ${summary.matched || 0}, Skipped: ${summary.skipped || 0}.`
+      );
+    } catch (error) {
+      console.error(error);
+      handleToast(error.message || "Unable to sync employees from KPI data.");
+    } finally {
+      setIsKpiSyncing(false);
+    }
   };
 
   const handleBulkAction = (action) => {
@@ -665,6 +1011,16 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {(settingsLoading || settingsSaving || isKpiSyncing) && (
+        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-bold text-blue-700">
+          {settingsLoading
+            ? "Loading backend employee settings..."
+            : isKpiSyncing
+              ? "Syncing employees from KPI data..."
+              : "Saving employee settings to backend..."}
+        </div>
+      )}
+
       <SettingsHeader
         isSyncing={isSyncing}
         hasAdminAccess={hasAdminAccess}
@@ -695,6 +1051,47 @@ export default function SettingsPage() {
 
           {hasAdminAccess && (
             <div className="flex flex-wrap items-center gap-1.5">
+              <input
+                ref={officialRosterFileRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleImportOfficialRoster}
+                className="hidden"
+              />
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setNewEmployee(createEmptyEmployeeForm());
+                  setIsAddEmployeeOpen(true);
+                }}
+                className="flex items-center gap-1 rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold text-blue-700 transition-colors hover:bg-blue-100"
+              >
+                <Plus className="h-3 w-3" />
+                <span>Add Employee</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => officialRosterFileRef.current?.click()}
+                disabled={isOfficialRosterImporting}
+                className="flex items-center gap-1 rounded-lg border border-emerald-100 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Import the official SIB-ID and Agent Name roster. Non-official KPI names will be excluded."
+              >
+                <Upload className={`h-3 w-3 ${isOfficialRosterImporting ? "animate-pulse" : ""}`} />
+                <span>{isOfficialRosterImporting ? "Importing..." : "Import Official Roster"}</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={handleSyncEmployeesFromKpi}
+                disabled={isKpiSyncing}
+                className="flex items-center gap-1 rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Import missing employee names from the generated KPI summary"
+              >
+                <FileSpreadsheet className={`h-3 w-3 ${isKpiSyncing ? "animate-pulse" : ""}`} />
+                <span>{isKpiSyncing ? "Syncing KPI..." : "Sync From KPI Data"}</span>
+              </Button>
+
               <span className="mr-1 text-[10px] font-bold uppercase text-slate-400">
                 Bulk ({selectedEmpIds.length}):
               </span>
@@ -751,24 +1148,6 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div className="flex w-full items-center gap-1 text-xs sm:w-auto">
-            <span className="font-mono text-slate-400">Team:</span>
-            <select
-              value={selectedTeamFilter}
-              onChange={(e) => {
-                setSelectedTeamFilter(e.target.value);
-                setManagementPage(1);
-              }}
-              className="sibs-filter-input min-h-[36px] text-xs"
-            >
-              <option value="all">All Teams</option>
-              {teams.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
 
           <div className="flex w-full items-center gap-1 text-xs sm:w-auto">
             <span className="font-mono text-slate-400">Status:</span>
@@ -836,7 +1215,7 @@ export default function SettingsPage() {
                       {emp.employee_name}
                     </p>
                     <p className="mt-0.5 text-[11px] font-semibold text-slate-400">
-                      {emp.employee_id || emp.employee_number || emp.id}
+                      {getDisplaySibId(emp)}
                     </p>
                   </div>
 
@@ -924,7 +1303,6 @@ export default function SettingsPage() {
                 <th className="p-3">SIB ID</th>
                 <th className="p-3">Agent Name</th>
                 <th className="p-3">Position</th>
-                <th className="p-3">Team</th>
                 <th className="p-3">Status</th>
                 <th className="p-3">Task Order</th>
                 <th className="p-3">HeroDash</th>
@@ -948,7 +1326,7 @@ export default function SettingsPage() {
                   )}
 
                   <td className="p-3 font-sans font-bold text-slate-700">
-                    {emp.employee_id || emp.employee_number || emp.id}
+                    {getDisplaySibId(emp)}
                   </td>
 
                   <td className="p-3">
@@ -962,10 +1340,6 @@ export default function SettingsPage() {
 
                   <td className="p-3 font-medium text-slate-700">
                     {emp.position || "-"}
-                  </td>
-
-                  <td className="p-3 font-semibold text-slate-700">
-                    {emp.team || "-"}
                   </td>
 
                   <td className="p-3">
@@ -1110,7 +1484,7 @@ export default function SettingsPage() {
               {paginatedEmployees.length === 0 && (
                 <tr>
                   <td
-                    colSpan={hasAdminAccess ? 10 : 9}
+                    colSpan={hasAdminAccess ? 9 : 8}
                     className="p-8 text-center text-sm font-bold text-slate-500"
                   >
                     No employees found matching criteria.
@@ -1209,10 +1583,11 @@ export default function SettingsPage() {
                 <Button
                   variant="outline"
                   onClick={handleSaveAssignments}
-                  className="flex items-center justify-center gap-1.5 rounded-lg border-0 bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-blue-700"
+                  disabled={settingsSaving}
+                  className="flex items-center justify-center gap-1.5 rounded-lg border-0 bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  Save Assignments
+                  {settingsSaving ? "Saving..." : "Save Assignments"}
                 </Button>
               </div>
             )}
@@ -1237,7 +1612,7 @@ export default function SettingsPage() {
                     {emp.employee_name}
                   </span>
                   <span className="mt-0.5 block text-[11px] text-slate-400">
-                    SIB ID: {emp.employee_id || emp.employee_number || emp.id}
+                    SIB ID: {getDisplaySibId(emp)}
                   </span>
                 </div>
 
@@ -1493,6 +1868,223 @@ export default function SettingsPage() {
         )}
       </BaseModal>
 
+
+      <BaseModal
+        open={isAddEmployeeOpen}
+        onClose={() => setIsAddEmployeeOpen(false)}
+        maxWidth="max-w-2xl"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-white p-5">
+          <h3 className="flex min-w-0 items-center gap-2 font-sans text-lg font-black tracking-tight text-slate-900">
+            <Plus className="h-5 w-5 shrink-0 text-blue-600" />
+            <span className="truncate">Add US Visa Employee</span>
+          </h3>
+
+          <Button
+            variant="outline"
+            onClick={() => setIsAddEmployeeOpen(false)}
+            className="shrink-0 rounded-lg border-0 bg-slate-100 p-1.5 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-800"
+          >
+            <X className="h-4.5 w-4.5" />
+          </Button>
+        </div>
+
+        <div className="space-y-5 p-5 font-sans text-xs">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                SIB ID
+              </label>
+              <input
+                value={newEmployee.employee_id}
+                onChange={(e) =>
+                  setNewEmployee((prev) => ({
+                    ...prev,
+                    employee_id: e.target.value,
+                    employee_number: e.target.value,
+                  }))
+                }
+                placeholder="Example: SIB-6677"
+                className="sibs-filter-input w-full text-sm font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Employee Name
+              </label>
+              <input
+                value={newEmployee.employee_name}
+                onChange={(e) =>
+                  setNewEmployee((prev) => ({
+                    ...prev,
+                    employee_name: e.target.value,
+                  }))
+                }
+                placeholder="Full name"
+                className="sibs-filter-input w-full text-sm font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Email
+              </label>
+              <input
+                value={newEmployee.email}
+                onChange={(e) =>
+                  setNewEmployee((prev) => ({
+                    ...prev,
+                    email: e.target.value,
+                  }))
+                }
+                placeholder="employee@sibs.com"
+                className="sibs-filter-input w-full text-sm font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Position
+              </label>
+              <input
+                value={newEmployee.position}
+                onChange={(e) =>
+                  setNewEmployee((prev) => ({
+                    ...prev,
+                    position: e.target.value,
+                  }))
+                }
+                placeholder="Position"
+                className="sibs-filter-input w-full text-sm font-bold"
+              />
+            </div>
+
+
+            <div>
+              <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Supervisor
+              </label>
+              <input
+                value={newEmployee.supervisor}
+                onChange={(e) =>
+                  setNewEmployee((prev) => ({
+                    ...prev,
+                    supervisor: e.target.value,
+                  }))
+                }
+                placeholder="Supervisor"
+                className="sibs-filter-input w-full text-sm font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Task Order
+              </label>
+              <select
+                value={newEmployee.task_order}
+                onChange={(e) =>
+                  setNewEmployee((prev) => ({
+                    ...prev,
+                    task_order: e.target.value,
+                    assigned_sub_account: e.target.value,
+                  }))
+                }
+                className="sibs-filter-input w-full text-sm font-bold"
+              >
+                <option value="">Select Task Order...</option>
+                {taskOrderOptions.map((taskOrder) => (
+                  <option key={taskOrder} value={taskOrder}>
+                    {taskOrder}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Status
+              </label>
+              <select
+                value={newEmployee.status}
+                onChange={(e) =>
+                  setNewEmployee((prev) => ({
+                    ...prev,
+                    status: e.target.value,
+                    employment_status:
+                      e.target.value === "Active" ? "Active" : "Inactive",
+                  }))
+                }
+                className="sibs-filter-input w-full text-sm font-bold"
+              >
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                HeroDash / KPI Source Name
+              </label>
+              <input
+                value={newEmployee.herodash}
+                onChange={(e) =>
+                  setNewEmployee((prev) => ({
+                    ...prev,
+                    herodash: e.target.value,
+                  }))
+                }
+                placeholder="Optional source name"
+                className="sibs-filter-input w-full text-sm font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                MSD / Email Source Name
+              </label>
+              <input
+                value={newEmployee.msd}
+                onChange={(e) =>
+                  setNewEmployee((prev) => ({
+                    ...prev,
+                    msd: e.target.value,
+                  }))
+                }
+                placeholder="Optional email source name"
+                className="sibs-filter-input w-full text-sm font-bold"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-[11px] font-semibold leading-relaxed text-blue-700">
+            HeroDash and MSD are optional, but they are useful when the KPI Excel
+            name is different from the official employee name. These values are
+            saved as backend aliases for dashboard matching.
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 rounded-b-2xl border-t border-slate-100 bg-slate-50 p-4">
+          <Button
+            variant="outline"
+            onClick={() => setIsAddEmployeeOpen(false)}
+            className="rounded-xl border border-slate-200 bg-white px-5 py-2 text-[13px] font-bold text-slate-700 shadow-sm transition-all hover:bg-slate-100"
+          >
+            Cancel
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={handleAddEmployee}
+            disabled={settingsSaving}
+            className="rounded-xl border-0 bg-blue-600 px-5 py-2 text-[13px] font-bold text-white shadow-sm transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {settingsSaving ? "Saving..." : "Add Employee"}
+          </Button>
+        </div>
+      </BaseModal>
+
       <BaseModal
         open={!!editingEmployee}
         onClose={() => setEditingEmployee(null)}
@@ -1524,9 +2116,7 @@ export default function SettingsPage() {
                     SIB ID
                   </p>
                   <p className="truncate text-[15px] font-black tracking-tight text-slate-900">
-                    {editingEmployee.employee_id ||
-                      editingEmployee.employee_number ||
-                      editingEmployee.id}
+                    {getDisplaySibId(editingEmployee)}
                   </p>
                 </div>
 

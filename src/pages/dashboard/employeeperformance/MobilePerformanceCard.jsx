@@ -50,8 +50,8 @@ function MobilePerformanceCard({ row, onClick }) {
             <p className="truncate font-bold text-slate-900">
               {row.employeeName}
             </p>
+
             <p className="mt-0.5 truncate font-mono text-[10px] uppercase text-slate-500">
-              {row.team} &middot;{" "}
               {row.hour !== undefined ? `${row.hour}:00` : "Daily"}
             </p>
           </div>

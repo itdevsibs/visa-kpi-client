@@ -10,9 +10,9 @@ import { Button } from "../../components/ui/button.jsx";
 import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList } from 'recharts';
 import { Clock, Phone, ArrowUpRight, ArrowDownRight, RefreshCw, FileText, Download, Printer, User, Mail, Award, Percent, Zap, BarChart3, HelpCircle } from 'lucide-react';
 import { AnimatedNumber } from "../../components/ui/motion.jsx";
-import { aggregateKPIRecords, generateHourlyRecord } from '../../lib/utils/mockData.js';
 import EmployeeFilterDropdown from "../../components/ui/EmployeeFilterDropdown.jsx";
 import LazyChartMount from "../../components/ui/LazyChartMount.jsx";
+import { getUsVisaKpiDashboard } from "../../services/api/usVisaKpiApi.js";
 const HOURS = [{
   value: 8,
   label: '08:00 AM'
@@ -50,141 +50,149 @@ const HOURS = [{
 // Normalize HOURS labels if needed
 HOURS[7].label = '03:00 PM'; // Fix any typo safely
 
+const EMPTY_SUMMARY_METRICS = {
+  loggedTime: 0,
+  expectedHours: 0,
+  loggedFormatted: '0h 0m',
+  loggedAchievement: 0,
+  handledCalls: 0,
+  callsTarget: 0,
+  callsAchievement: 0,
+  avgTalkTime: 0,
+  talkTarget: 180,
+  avgHoldTime: 0,
+  holdTarget: 30,
+  phoneOccupancy: 0,
+  availableEmailCapacity: 0,
+  targetEmails: 0,
+  actualEmails: 0,
+  emailUtilization: 0,
+  actualEfficiency: 0,
+  trends: {
+    loggedTime: 0,
+    handledCalls: 0,
+    avgTalkTime: 0,
+    avgHoldTime: 0,
+    phoneOccupancy: 0,
+    emailCapacity: 0,
+    emailUtilization: 0,
+    efficiency: 0,
+  },
+};
+
 export default function DashboardPage() {
-  const { filteredEmployeesForPerformanceAndDashboard: employees, userRole, selectedSimUserEmail: currentUserEmail } = useRoster();
+  const { userRole, selectedSimUserEmail: currentUserEmail } = useRoster();
+
   const [selectedEmpIds, setSelectedEmpIds] = useState(['all']);
-  const [selectedDate, setSelectedDate] = useState('2026-07-07');
+  const [selectedDate, setSelectedDate] = useState('2026-06-30');
   const [isPending, startTransition] = useTransition();
   const [fromHour, setFromHour] = useState(8);
   const [toHour, setToHour] = useState(17);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [dashboardData, setDashboardData] = useState(null);
+  const [dashboardError, setDashboardError] = useState('');
+  const [dashboardLoading, setDashboardLoading] = useState(false);
 
-  // If the user's role is Employee, restrict them to viewing only their own KPIs
+  const employees = dashboardData?.agents || [];
+
+  const fetchDashboardData = useCallback(async () => {
+    try {
+      setDashboardLoading(true);
+      setDashboardError('');
+
+      const data = await getUsVisaKpiDashboard({
+        date: selectedDate,
+        fromHour,
+        toHour,
+        employeeIds: selectedEmpIds,
+      });
+
+      setDashboardData(data);
+    } catch (error) {
+      console.error('Failed to load US Visa KPI dashboard:', error);
+      setDashboardError(error.message || 'Failed to load dashboard data.');
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [selectedDate, fromHour, toHour, selectedEmpIds]);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // If the user's role is Employee, restrict them to viewing only their own KPIs.
+  // Backend KPI agents currently do not include email, so this safely falls back to normal filtering.
   const activeUserEmployee = useMemo(() => {
     if (userRole === 'Employee') {
-      return employees.find(e => e.email.toLowerCase() === currentUserEmail.toLowerCase()) || null;
+      return (
+        employees.find(
+          (e) =>
+            e.email &&
+            currentUserEmail &&
+            e.email.toLowerCase() === currentUserEmail.toLowerCase()
+        ) || null
+      );
     }
+
     return null;
   }, [userRole, employees, currentUserEmail]);
+
   useEffect(() => {
     if (activeUserEmployee) {
       setSelectedEmpIds([activeUserEmployee.id]);
-    } else {
-      // Filter out any selected IDs that are no longer valid or active
-      const validIds = selectedEmpIds.filter(id => id === 'all' || employees.some(e => e.id === id && e.status === 'Active' && e.employment_status === 'Active'));
-      if (validIds.length === 0) {
-        setSelectedEmpIds(['all']);
-      } else if (JSON.stringify(validIds) !== JSON.stringify(selectedEmpIds)) {
-        setSelectedEmpIds(validIds);
-      }
+      return;
     }
-  }, [activeUserEmployee, employees]);
+
+    const validIds = selectedEmpIds.filter(
+      (id) =>
+        id === 'all' ||
+        employees.some(
+          (e) =>
+            e.id === id &&
+            e.status === 'Active' &&
+            e.employment_status === 'Active'
+        )
+    );
+
+    if (validIds.length === 0) {
+      setSelectedEmpIds(['all']);
+    } else if (JSON.stringify(validIds) !== JSON.stringify(selectedEmpIds)) {
+      setSelectedEmpIds(validIds);
+    }
+  }, [activeUserEmployee, employees, selectedEmpIds]);
+
   const activeEmployees = useMemo(() => {
-    return employees.filter(e => e.status === 'Active' && e.employment_status === 'Active');
+    return employees.filter(
+      (e) => e.status === 'Active' && e.employment_status === 'Active'
+    );
   }, [employees]);
 
   const selectedEmployeeName = useMemo(() => {
-    if (selectedEmpIds.includes('all') || selectedEmpIds.length === 0) return 'All Employees';
-    if (selectedEmpIds.length === 1) {
-      return employees.find(e => e.id === selectedEmpIds[0])?.employee_name || 'Select Employee';
+    if (selectedEmpIds.includes('all') || selectedEmpIds.length === 0) {
+      return 'All Employees';
     }
+
+    if (selectedEmpIds.length === 1) {
+      return (
+        employees.find((e) => e.id === selectedEmpIds[0])?.employee_name ||
+        'Select Employee'
+      );
+    }
+
     return `${selectedEmpIds.length} Employees Selected`;
   }, [selectedEmpIds, employees]);
 
-  // Fetch / aggregate core data based on filters
-  const currentKPIs = useMemo(() => {
-    const aggregated = aggregateKPIRecords(employees, selectedDate, fromHour, toHour);
-    if (selectedEmpIds.includes('all') || selectedEmpIds.length === 0) {
-      return aggregated;
-    }
-    return aggregated.filter(kpi => selectedEmpIds.includes(kpi.employeeId));
-  }, [employees, selectedDate, fromHour, toHour, selectedEmpIds]);
-
-  // Aggregate values across filtered employees for the summary cards
   const summaryMetrics = useMemo(() => {
-    if (currentKPIs.length === 0) {
-      return {
-        loggedTime: 0,
-        expectedHours: 0,
-        loggedFormatted: '0h 0m',
-        loggedAchievement: 0,
-        handledCalls: 0,
-        callsTarget: 0,
-        callsAchievement: 0,
-        avgTalkTime: 0,
-        talkTarget: 180,
-        // standard target
-        avgHoldTime: 0,
-        holdTarget: 30,
-        // standard target
-        phoneOccupancy: 0,
-        availableEmailCapacity: 0,
-        targetEmails: 0,
-        actualEmails: 0,
-        emailUtilization: 0,
-        actualEfficiency: 0
-      };
-    }
-    let totalLogged = 0;
-    let totalExpected = 0;
-    let totalCalls = 0;
-    let totalTalkSeconds = 0;
-    let totalHoldSeconds = 0;
-    let occupancySum = 0;
-    let emailCapacitySum = 0;
-    let targetEmailsSum = 0;
-    let actualEmailsSum = 0;
-    let efficiencySum = 0;
-    currentKPIs.forEach(kpi => {
-      totalLogged += kpi.loggedSeconds;
-      totalExpected += kpi.expectedSeconds;
-      totalCalls += kpi.handledCalls;
-      totalTalkSeconds += kpi.avgTalkTime * kpi.handledCalls;
-      totalHoldSeconds += kpi.avgHoldTime * kpi.handledCalls;
-      occupancySum += kpi.phoneOccupancy;
-      emailCapacitySum += kpi.availableEmailCapacity;
-      targetEmailsSum += kpi.targetEmails;
-      actualEmailsSum += kpi.actualEmails;
-      efficiencySum += kpi.efficiency;
-    });
-    const count = currentKPIs.length;
-    const avgTalkTime = totalCalls > 0 ? Math.round(totalTalkSeconds / totalCalls) : 0;
-    const avgHoldTime = totalCalls > 0 ? Math.round(totalHoldSeconds / totalCalls) : 0;
-    const loggedHours = Math.floor(totalLogged / 3600);
-    const loggedMins = Math.round(totalLogged % 3600 / 60);
-    const targetCalls = count * 45; // average daily target of 45 calls per employee
+    return dashboardData?.summaryMetrics || EMPTY_SUMMARY_METRICS;
+  }, [dashboardData]);
 
-    return {
-      loggedTime: totalLogged,
-      expectedHours: totalExpected / 3600,
-      loggedFormatted: `${loggedHours}h ${loggedMins}m`,
-      loggedAchievement: totalExpected > 0 ? Math.round(totalLogged / totalExpected * 100) : 0,
-      handledCalls: totalCalls,
-      callsTarget: targetCalls,
-      callsAchievement: targetCalls > 0 ? Math.min(100, Math.round(totalCalls / targetCalls * 100)) : 0,
-      avgTalkTime,
-      talkTarget: 180,
-      avgHoldTime,
-      holdTarget: 30,
-      phoneOccupancy: Math.round(occupancySum / count),
-      availableEmailCapacity: Math.round(emailCapacitySum),
-      targetEmails: targetEmailsSum,
-      actualEmails: actualEmailsSum,
-      emailUtilization: targetEmailsSum > 0 ? Math.round(actualEmailsSum / targetEmailsSum * 100) : 0,
-      actualEfficiency: Math.round(efficiencySum / count * 10) / 10,
-      // Dynamic pseudo-trends based on aggregated data properties
-      trends: {
-        loggedTime: (totalLogged % 11) - 4,
-        handledCalls: (totalCalls % 15) - 3,
-        avgTalkTime: (avgTalkTime % 9) - 4,
-        avgHoldTime: (avgHoldTime % 11) - 5,
-        phoneOccupancy: (Math.round(occupancySum) % 7) - 2,
-        emailCapacity: (Math.round(emailCapacitySum) % 25) - 15,
-        emailUtilization: (actualEmailsSum % 13) - 3,
-        efficiency: (Math.round(efficiencySum) % 6) - 2
-      }
-    };
-  }, [currentKPIs]);
+  const hourlyChartData = useMemo(() => {
+    return dashboardData?.hourlyChartData || [];
+  }, [dashboardData]);
+
+  const teamInsights = useMemo(() => {
+    return dashboardData?.teamInsights || null;
+  }, [dashboardData]);
 
   // Helper for rendering trend indicators
   const renderTrend = (value, inverse = false) => {
@@ -199,69 +207,6 @@ export default function DashboardPage() {
     );
   };
 
-  // Hourly chart data series (aggregated hourly across all filtered employees)
-  const hourlyChartData = useMemo(() => {
-    const data = [];
-    const activeFilterEmployees = selectedEmpIds.includes('all') || selectedEmpIds.length === 0 ? activeEmployees : activeEmployees.filter(e => selectedEmpIds.includes(e.id));
-    for (let h = fromHour; h <= toHour; h++) {
-      let expected = 0;
-      let logged = 0;
-      let calls = 0;
-      let talkSum = 0;
-      let holdSum = 0;
-      let callsWithDuration = 0;
-      let actualEmails = 0;
-      let targetEmails = 0;
-      let emailCapacity = 0;
-      let occupiedSec = 0;
-      let efficiencySum = 0;
-      let workingAgentsCount = 0;
-      activeFilterEmployees.forEach(emp => {
-        const hr = generateHourlyRecord(emp.id, selectedDate, h);
-        expected += hr.expectedSeconds;
-        logged += hr.loggedSeconds;
-        calls += hr.handledCalls;
-        actualEmails += hr.actualEmails;
-        targetEmails += hr.targetEmails;
-        emailCapacity += hr.availableEmailCapacity;
-        occupiedSec += hr.occupiedSeconds;
-        if (hr.handledCalls > 0) {
-          const avgT = hr.totalTalkSeconds / hr.handledCalls;
-          const avgH = hr.totalHoldSeconds / hr.handledCalls;
-          talkSum += avgT;
-          holdSum += avgH;
-          callsWithDuration++;
-        }
-        if (hr.expectedSeconds > 0) {
-          efficiencySum += hr.efficiency;
-          workingAgentsCount++;
-        }
-      });
-      const avgTalk = callsWithDuration > 0 ? Math.round(talkSum / callsWithDuration) : 0;
-      const avgHold = callsWithDuration > 0 ? Math.round(holdSum / callsWithDuration) : 0;
-      const occupancy = logged > 0 ? Math.round(occupiedSec / logged * 100) : 0;
-      const efficiency = workingAgentsCount > 0 ? Math.round(efficiencySum / workingAgentsCount) : 0;
-      const hourObj = HOURS.find(item => item.value === h);
-      const hourLabel = hourObj ? hourObj.label : `${h}:00`;
-      data.push({
-        hour: hourLabel,
-        'Expected Hours': Math.round(expected / 3600 * 10) / 10,
-        'Logged Time': Math.round(logged / 3600 * 10) / 10,
-        'Calls Actual': calls,
-        'Calls Target': activeFilterEmployees.length * 5,
-        // 5 calls target per working hour
-        'Avg Talk Time (s)': avgTalk,
-        'Avg Hold Time (s)': avgHold,
-        'Occupied %': occupancy,
-        'Available %': Math.max(0, 100 - occupancy),
-        'Actual Emails': actualEmails,
-        'Target Emails': targetEmails,
-        'Email Capacity': emailCapacity,
-        'Efficiency %': efficiency
-      });
-    }
-    return data;
-  }, [selectedEmpIds, activeEmployees, selectedDate, fromHour, toHour]);
 
   // Donut chart phone occupancy parts
   const donutData = useMemo(() => {
@@ -288,54 +233,6 @@ export default function DashboardPage() {
     ];
   }, [summaryMetrics.phoneOccupancy]);
 
-  // Team Insights Generation
-  const teamInsights = useMemo(() => {
-    const allAggregated = aggregateKPIRecords(employees, selectedDate, fromHour, toHour);
-    if (allAggregated.length === 0) return null;
-
-    // Filter by team if Employee belongs to a team or we are just summarizing
-    let highestEff = {
-      name: 'N/A',
-      val: 0
-    };
-    let mostCalls = {
-      name: 'N/A',
-      val: 0
-    };
-    let highestOcc = 0;
-    let lowestEff = 100;
-    let efficiencySum = 0;
-    allAggregated.forEach(kpi => {
-      efficiencySum += kpi.efficiency;
-      if (kpi.efficiency > highestEff.val) {
-        highestEff = {
-          name: kpi.employeeName,
-          val: kpi.efficiency
-        };
-      }
-      if (kpi.handledCalls > mostCalls.val) {
-        mostCalls = {
-          name: kpi.employeeName,
-          val: kpi.handledCalls
-        };
-      }
-      if (kpi.phoneOccupancy > highestOcc) {
-        highestOcc = kpi.phoneOccupancy;
-      }
-      if (kpi.efficiency < lowestEff) {
-        lowestEff = kpi.efficiency;
-      }
-    });
-    return {
-      highestEffName: highestEff.name,
-      highestEffVal: highestEff.val,
-      mostCallsName: mostCalls.name,
-      mostCallsVal: mostCalls.val,
-      highestOccupancy: highestOcc,
-      lowestEfficiency: lowestEff === 100 ? 0 : lowestEff,
-      teamAverage: Math.round(efficiencySum / allAggregated.length)
-    };
-  }, [employees, selectedDate, fromHour, toHour]);
 
   // Dynamic sparkline data derived from hourlyChartData
   const sparklineDataMap = useMemo(() => {
@@ -366,11 +263,27 @@ export default function DashboardPage() {
   );
   const triggerRefresh = async () => {
     setIsRefreshing(true);
-    window.dispatchEvent(new CustomEvent('show-toast', { detail: "Recalculating real-time KPI aggregates..." }));
-    await new Promise(r => setTimeout(r, 1200));
+
+    window.dispatchEvent(
+      new CustomEvent('show-toast', {
+        detail: 'Refreshing backend KPI data...',
+      })
+    );
+
+    await fetchDashboardData();
+
     setIsRefreshing(false);
-    window.dispatchEvent(new CustomEvent('show-toast', { detail: "KPI aggregates updated successfully." }));
-    setTimeout(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: null })), 3000);
+
+    window.dispatchEvent(
+      new CustomEvent('show-toast', {
+        detail: 'Dashboard data refreshed successfully.',
+      })
+    );
+
+    setTimeout(
+      () => window.dispatchEvent(new CustomEvent('show-toast', { detail: null })),
+      3000
+    );
   };
   const handleExport = async (format) => {
     window.dispatchEvent(new CustomEvent('show-toast', { detail: `Preparing US Visa KPI report in ${format} format...` }));
@@ -381,7 +294,7 @@ export default function DashboardPage() {
 
     // Mock File Download trigger
     const element = document.createElement("a");
-    const file = new Blob([`US Visa KPI Report\nDate: ${selectedDate}\nPeriod: ${HOURS.find(h => h.value === fromHour)?.label || ''} to ${HOURS.find(h => h.value === toHour)?.label || ''}\nTarget Employee: ${selectedEmployeeName}\n\nMetrics:\nActual Logged Time: ${summaryMetrics.loggedFormatted} (Achievement: ${summaryMetrics.loggedAchievement}%)\nHandled Calls: ${summaryMetrics.handledCalls}\nAverage Talk Time: $<AnimatedNumber value={summaryMetrics.avgTalkTime} />s\nAverage Hold Time: $<AnimatedNumber value={summaryMetrics.avgHoldTime} />s\nPhone Occupancy: $<AnimatedNumber value={summaryMetrics.phoneOccupancy} />%\nActual Efficiency: $<AnimatedNumber value={summaryMetrics.actualEfficiency} />%`], {
+    const file = new Blob([`US Visa KPI Report\nDate: ${selectedDate}\nPeriod: ${HOURS.find(h => h.value === fromHour)?.label || ''} to ${HOURS.find(h => h.value === toHour)?.label || ''}\nTarget Employee: ${selectedEmployeeName}\n\nMetrics:\nActual Logged Time: ${summaryMetrics.loggedFormatted} (Achievement: ${summaryMetrics.loggedAchievement}%)\nHandled Calls: ${summaryMetrics.handledCalls}\nAverage Talk Time: ${summaryMetrics.avgTalkTime}s\nAverage Hold Time: ${summaryMetrics.avgHoldTime}s\nPhone Occupancy: ${summaryMetrics.phoneOccupancy}%\nActual Efficiency: ${summaryMetrics.actualEfficiency}%`], {
       type: 'text/plain'
     });
     element.href = URL.createObjectURL(file);
@@ -431,6 +344,18 @@ export default function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      {dashboardError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600">
+          {dashboardError}
+        </div>
+      )}
+
+      {dashboardLoading && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-600">
+          Loading backend KPI data...
+        </div>
+      )}
 
       {/* Dashboard Filters Group */}
 <div className="flex flex-col md:flex-row items-end gap-4 bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm relative z-50 mb-6 w-full">

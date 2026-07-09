@@ -96,11 +96,11 @@ function Header() {
   }, []);
 
   return (
-    <header className="relative z-[80] h-16 bg-white border-b border-slate-200/60 flex items-center px-3 sm:px-6 shrink-0 gap-3 overflow-visible">
+    <header className="relative z-[80] h-[76px] min-h-[76px] shrink-0 overflow-visible border-b border-slate-200/60 bg-white px-3 sm:px-6 flex items-center gap-3">
       {/* Left: Brand */}
-      <div className="flex h-11 items-center shrink-0 w-12 md:w-64">
-        <div className="flex h-11 items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 text-xs font-black text-white shadow-md shadow-blue-500/20 border border-blue-500/30">
+      <div className="flex h-full shrink-0 items-center w-12 md:w-64">
+        <div className="flex h-full items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-blue-500/30 bg-gradient-to-br from-blue-600 to-blue-700 text-xs font-black text-white shadow-md shadow-blue-500/20">
             US
           </div>
 
@@ -116,8 +116,8 @@ function Header() {
       </div>
 
       {/* Center Navigation */}
-      <div className="flex min-w-0 flex-1 justify-center">
-        <nav className="relative grid h-11 grid-cols-3 rounded-2xl border border-slate-200/60 bg-slate-100/80 p-1 shadow-inner shrink-0">
+      <div className="flex min-w-0 flex-1 items-center justify-center">
+        <nav className="relative grid h-12 shrink-0 grid-cols-3 rounded-2xl border border-slate-200/60 bg-slate-100/80 p-1 shadow-inner">
           <div
             className="absolute bottom-1 left-1 top-1 rounded-xl bg-blue-600 shadow-md shadow-blue-500/20 transition-transform duration-300 ease-out will-change-transform"
             style={{
@@ -134,7 +134,7 @@ function Header() {
               <Link
                 key={item.path}
                 to={item.path}
-                className={`relative z-10 flex h-9 min-w-10 items-center justify-center gap-2 rounded-xl px-3 text-xs font-bold transition-colors duration-200 lg:min-w-[180px] ${
+                className={`relative z-10 flex h-10 min-w-10 items-center justify-center gap-2 rounded-xl px-3 text-xs font-bold transition-colors duration-200 lg:min-w-[180px] ${
                   isActive
                     ? "text-white"
                     : "text-slate-500 hover:text-slate-900"
@@ -152,12 +152,12 @@ function Header() {
       </div>
 
       {/* Right: Profile / Logout */}
-      <div className="flex h-11 justify-end shrink-0 w-12 md:w-64">
+      <div className="flex h-full shrink-0 items-center justify-end w-12 md:w-64">
         <div ref={profileMenuRef} className="relative">
           <button
             type="button"
             onClick={() => setIsProfileOpen((prev) => !prev)}
-            className="flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 shadow-sm transition-all duration-200 hover:bg-slate-50 hover:shadow-md active:scale-[0.98]"
+            className="flex h-12 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 shadow-sm transition-all duration-200 hover:bg-slate-50 hover:shadow-md active:scale-[0.98]"
           >
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-black text-white">
               {initials}
@@ -180,7 +180,7 @@ function Header() {
           </button>
 
           {isProfileOpen && (
-            <div className="fixed left-3 right-3 top-[72px] z-[100] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-72">
+            <div className="fixed left-3 right-3 top-[84px] z-[100] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-72">
               <div className="border-b border-slate-100 p-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-black text-white">
