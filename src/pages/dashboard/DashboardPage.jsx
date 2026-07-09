@@ -4,17 +4,15 @@ import { useRoster } from "../../services/context/RosterContext.jsx";
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef, useTransition } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { Button } from "../../components/ui/button.jsx";
-import { Badge } from "../../components/ui/badge.jsx";
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card.jsx";
-import { Input } from "../../components/ui/input.jsx";
 
 import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList } from 'recharts';
-import { Clock, Phone, ArrowUpRight, ArrowDownRight, RefreshCw, FileText, Download, Printer, User, Search, Check, Mail, Award, Percent, ChevronDown, Zap, BarChart3, HelpCircle } from 'lucide-react';
+import { Clock, Phone, ArrowUpRight, ArrowDownRight, RefreshCw, FileText, Download, Printer, User, Mail, Award, Percent, Zap, BarChart3, HelpCircle } from 'lucide-react';
 import { AnimatedNumber } from "../../components/ui/motion.jsx";
 import { aggregateKPIRecords, generateHourlyRecord } from '../../lib/utils/mockData.js';
-import { useDebounce } from "../../hooks/useDebounce.js";
+import EmployeeFilterDropdown from "../../components/ui/EmployeeFilterDropdown.jsx";
+import LazyChartMount from "../../components/ui/LazyChartMount.jsx";
 const HOURS = [{
   value: 8,
   label: '08:00 AM'
@@ -60,21 +58,6 @@ export default function DashboardPage() {
   const [fromHour, setFromHour] = useState(8);
   const [toHour, setToHour] = useState(17);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
-  const [isEmpDropdownOpen, setIsEmpDropdownOpen] = useState(false);
-  const dropdownRef = useRef(null);
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setIsEmpDropdownOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
 
   // If the user's role is Employee, restrict them to viewing only their own KPIs
   const activeUserEmployee = useMemo(() => {
@@ -100,10 +83,6 @@ export default function DashboardPage() {
     return employees.filter(e => e.status === 'Active' && e.employment_status === 'Active');
   }, [employees]);
 
-  // Handle searchable employee select
-  const filteredEmployeesForDropdown = useMemo(() => {
-    return activeEmployees.filter(e => e.employee_name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()));
-  }, [activeEmployees, debouncedSearchQuery]);
   const selectedEmployeeName = useMemo(() => {
     if (selectedEmpIds.includes('all') || selectedEmpIds.length === 0) return 'All Employees';
     if (selectedEmpIds.length === 1) {
@@ -359,7 +338,32 @@ export default function DashboardPage() {
   }, [employees, selectedDate, fromHour, toHour]);
 
   // Dynamic sparkline data derived from hourlyChartData
-  const getSparklineData = (key) => hourlyChartData.map(d => ({ val: d[key] ?? 0, idx: d.hour }));
+  const sparklineDataMap = useMemo(() => {
+    const keys = [
+      'Logged Time',
+      'Calls Actual',
+      'Avg Talk Time (s)',
+      'Avg Hold Time (s)',
+      'Occupied %',
+      'Email Capacity',
+      'Actual Emails',
+      'Efficiency %',
+    ];
+
+    return keys.reduce((acc, key) => {
+      acc[key] = hourlyChartData.map((d) => ({
+        val: d[key] ?? 0,
+        idx: d.hour,
+      }));
+
+      return acc;
+    }, {});
+  }, [hourlyChartData]);
+
+  const getSparklineData = useCallback(
+    (key) => sparklineDataMap[key] || [],
+    [sparklineDataMap]
+  );
   const triggerRefresh = async () => {
     setIsRefreshing(true);
     window.dispatchEvent(new CustomEvent('show-toast', { detail: "Recalculating real-time KPI aggregates..." }));
@@ -429,138 +433,87 @@ export default function DashboardPage() {
       </div>
 
       {/* Dashboard Filters Group */}
-      <div className="flex flex-wrap items-end gap-4 bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm relative z-50 mb-6">
-          {/* Employee Dropdown - RESTRICTED IF USER ROLE IS 'Employee' */}
-          <div className="flex flex-col gap-1.5 w-full sm:w-auto">
-            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
-              Employee
-            </label>
-            {userRole === 'Employee' ? <div className="flex items-center gap-2 bg-slate-50 text-slate-700 text-xs px-3 py-2 rounded-lg border border-slate-200 cursor-not-allowed">
-                <User className="h-3.5 w-3.5 text-slate-400" />
-                <span className="font-semibold">{selectedEmployeeName}</span>
-              </div> : <div className="relative w-full sm:w-auto" ref={dropdownRef}>
-                <Button variant="outline"  onClick={() => setIsEmpDropdownOpen(!isEmpDropdownOpen)} aria-haspopup="listbox" aria-expanded={isEmpDropdownOpen} aria-controls="employee-dropdown-list" className="flex items-center justify-between gap-2 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs px-3 py-2 rounded-lg border border-slate-200 text-left transition-colors font-semibold w-full sm:min-w-[180px]">
-                  <span className="truncate">{selectedEmployeeName}</span>
-                  <ChevronDown className="h-3 w-3 text-slate-400 shrink-0" />
-                </Button>
-
-                {isEmpDropdownOpen && <div id="employee-dropdown-list" role="listbox" className="absolute left-0 top-full mt-2 w-72 bg-white border border-slate-200 rounded-2xl shadow-2xl z-30 overflow-hidden flex flex-col animate-slide-up-fade origin-top-left ring-1 ring-slate-900/5">
-                    {/* Search Header */}
-                    <div className="p-3 border-b border-slate-100 bg-slate-50/50">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                        <input type="text" placeholder="Search team members..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full text-xs outline-none bg-white border border-slate-200 text-slate-700 rounded-xl pl-9 pr-3 py-2.5 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all shadow-sm" onClick={e => e.stopPropagation()} />
-                      </div>
-                    </div>
-                    
-                    {/* List Body */}
-                    <div className="max-h-64 overflow-y-auto p-1.5 thin-scroll flex flex-col gap-0.5">
-                      {/* All Employees Option */}
-                      <button type="button" role="option" aria-selected={selectedEmpIds.includes('all')} onClick={e => {
-                          e.stopPropagation();
-                          startTransition(() => setSelectedEmpIds(['all']));
-                      }} className={`w-full text-left px-3 py-2.5 rounded-xl text-xs flex items-center gap-3 transition-all ${selectedEmpIds.includes('all') ? 'bg-blue-50/0 text-blue-600' : 'hover:bg-slate-100 text-slate-700'}`}>
-                        <div className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${selectedEmpIds.includes('all') ? 'border-blue-600 bg-blue-600 text-white shadow-sm shadow-blue-500/20' : 'border-slate-300 bg-white'}`}>
-                          {selectedEmpIds.includes('all') && <Check className="h-3 w-3 stroke-[3]" />}
-                        </div>
-                        <div className="flex-1 font-semibold">
-                           All Employees
-                        </div>
-                      </button>
-
-                      {filteredEmployeesForDropdown.length > 0 && <div className="h-px bg-slate-100 mx-2 my-1" />}
-
-                      {/* Individual Employees */}
-                      {filteredEmployeesForDropdown.map(emp => {
-                        const isSelected = selectedEmpIds.includes(emp.id);
-                        return <button type="button" role="option" aria-selected={isSelected} key={emp.id} onClick={e => {
-                          e.stopPropagation();
-                          let newIds = [...selectedEmpIds];
-                          if (newIds.includes('all')) newIds = newIds.filter(id => id !== 'all');
-                          if (isSelected) {
-                            newIds = newIds.filter(id => id !== emp.id);
-                            if (newIds.length === 0) newIds = ['all'];
-                          } else {
-                            newIds.push(emp.id);
-                          }
-                          startTransition(() => setSelectedEmpIds(newIds));
-                        }} className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center gap-3 transition-all ${isSelected ? 'bg-blue-50/0 text-blue-700' : 'hover:bg-slate-50 text-slate-700'}`}>
-                          <div className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${isSelected ? 'border-blue-600 bg-blue-600 text-white shadow-sm shadow-blue-500/20' : 'border-slate-300 bg-white'}`}>
-                            {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
-                          </div>
-                          <div className="truncate flex-1">
-                            <p className="font-semibold">{emp.employee_name}</p>
-                            <p className="text-[10px] text-slate-400 font-medium mt-0.5">{emp.team}</p>
-                          </div>
-                        </button>;
-                      })}
-                      {filteredEmployeesForDropdown.length === 0 && <div className="py-8 text-center flex flex-col items-center justify-center gap-2">
-                         <div className="h-10 w-10 rounded-full bg-slate-50 flex items-center justify-center border border-slate-100">
-                           <User className="h-4 w-4 text-slate-300" />
-                         </div>
-                         <p className="text-[11px] font-semibold text-slate-400">No employees found</p>
-                      </div>}
-                    </div>
-                    
-                    {/* Apply Footer */}
-                    <div className="border-t border-slate-100 p-3 bg-white flex items-center justify-between gap-3">
-                      <button 
-                        type="button" 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          startTransition(() => setSelectedEmpIds(['all']));
-                        }} 
-                        className="text-[10px] font-semibold text-slate-400 hover:text-slate-600 transition-colors px-1 shrink-0"
-                      >
-                        Reset to All
-                      </button>
-                      <Button onClick={() => setIsEmpDropdownOpen(false)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 rounded-xl transition-all shadow-md shadow-blue-600/20 cursor-pointer flex items-center justify-center gap-2 h-auto flex-1 max-w-[140px]">
-                        Apply Filters
-                        {selectedEmpIds.length > 0 && !selectedEmpIds.includes('all') && <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30 border-none px-1.5 py-0 text-[10px] rounded-md h-5">{selectedEmpIds.length}</Badge>}
-                      </Button>
-                    </div>
-                  </div>}
-              </div>}
-          </div>
-
-          {/* Date Picker */}
-          <div className="flex flex-col gap-1.5 w-full sm:w-auto">
-            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
-              Date
-            </label>
-            <input type="date" value={selectedDate} onChange={e => startTransition(() => setSelectedDate(e.target.value))} className="sibs-filter-input bg-slate-50 hover:bg-slate-100 text-xs text-center cursor-pointer w-full" />
-          </div>
-
-          {/* Time Selector - From */}
-          <div className="flex flex-col gap-1.5 w-full sm:w-auto">
-            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
-              From
-            </label>
-            <select value={fromHour} onChange={e => {
-            const val = parseInt(e.target.value);
-            if (val < toHour) startTransition(() => setFromHour(val));
-          }} className="sibs-filter-input bg-slate-50 hover:bg-slate-100 text-xs pl-3 pr-4 cursor-pointer w-full">
-              {HOURS.map(h => <option key={`from-${h.value}`} value={h.value} disabled={h.value >= toHour}>
-                  {h.label}
-                </option>)}
-            </select>
-          </div>
-
-          {/* Time Selector - To */}
-          <div className="flex flex-col gap-1.5 w-full sm:w-auto">
-            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
-              To
-            </label>
-            <select value={toHour} onChange={e => {
-            const val = parseInt(e.target.value);
-            if (val > fromHour) startTransition(() => setToHour(val));
-          }} className="sibs-filter-input bg-slate-50 hover:bg-slate-100 text-xs pl-3 pr-4 cursor-pointer w-full">
-              {HOURS.map(h => <option key={`to-${h.value}`} value={h.value} disabled={h.value <= fromHour}>
-                  {h.label}
-                </option>)}
-            </select>
-          </div>
+<div className="flex flex-col md:flex-row items-end gap-4 bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm relative z-50 mb-6 w-full">
+  {/* Employee */}
+  <div className="flex flex-col gap-1.5 w-full md:flex-[1.35] shrink-0">
+    {userRole === "Employee" ? (
+      <>
+        <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
+          Employee
+        </label>
+        <div className="flex items-center gap-2 bg-slate-50 text-slate-700 text-xs px-3 py-2 rounded-lg border border-slate-200 cursor-not-allowed min-h-[38px]">
+          <User className="h-3.5 w-3.5 text-slate-400" />
+          <span className="font-semibold truncate">{selectedEmployeeName}</span>
         </div>
+      </>
+    ) : (
+      <EmployeeFilterDropdown
+        label="EMPLOYEE"
+        employees={activeEmployees}
+        selectedIds={selectedEmpIds}
+        onChange={(newIds) => {
+          startTransition(() => setSelectedEmpIds(newIds));
+        }}
+        placeholder="Search team members..."
+        selectionMode="immediate"
+      />
+    )}
+  </div>
+
+  {/* Date */}
+  <div className="flex flex-col gap-1.5 w-full md:flex-1 shrink-0">
+    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
+      Date
+    </label>
+    <input
+      type="date"
+      value={selectedDate}
+      onChange={(e) => startTransition(() => setSelectedDate(e.target.value))}
+      className="sibs-filter-input w-full bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200 text-center cursor-pointer"
+    />
+  </div>
+
+  {/* Time Range */}
+  <div className="flex flex-col gap-1.5 w-full md:flex-1 shrink-0">
+    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
+      Time Range
+    </label>
+
+    <div className="flex items-center gap-2">
+      <select
+        value={fromHour}
+        onChange={(e) => {
+          const val = parseInt(e.target.value);
+          if (val < toHour) startTransition(() => setFromHour(val));
+        }}
+        className="sibs-filter-input flex-1 bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200 cursor-pointer"
+      >
+        {HOURS.map((h) => (
+          <option key={`from-${h.value}`} value={h.value} disabled={h.value >= toHour}>
+            {h.label}
+          </option>
+        ))}
+      </select>
+
+      <span className="text-slate-400 font-medium text-sm">-</span>
+
+      <select
+        value={toHour}
+        onChange={(e) => {
+          const val = parseInt(e.target.value);
+          if (val > fromHour) startTransition(() => setToHour(val));
+        }}
+        className="sibs-filter-input flex-1 bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200 cursor-pointer"
+      >
+        {HOURS.map((h) => (
+          <option key={`to-${h.value}`} value={h.value} disabled={h.value <= fromHour}>
+            {h.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  </div>
+</div>
 
       {/* KPI Summary Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="kpi-cards-grid">
@@ -595,7 +548,7 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="val" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#spark0)" isAnimationActive={true} />
+                <Area type="monotone" dataKey="val" stroke="#3b82f6" strokeWidth={2.5} fillOpacity={1} fill="url(#spark0)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -632,7 +585,7 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="val" stroke="#10b981" strokeWidth={2.5} fillOpacity={1} fill="url(#spark1)" isAnimationActive={true} />
+                <Area type="monotone" dataKey="val" stroke="#10b981" strokeWidth={2.5} fillOpacity={1} fill="url(#spark1)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -669,7 +622,7 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="val" stroke="#8b5cf6" strokeWidth={2.5} fillOpacity={1} fill="url(#spark2)" isAnimationActive={true} />
+                <Area type="monotone" dataKey="val" stroke="#8b5cf6" strokeWidth={2.5} fillOpacity={1} fill="url(#spark2)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -706,7 +659,7 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="val" stroke="#f59e0b" strokeWidth={2.5} fillOpacity={1} fill="url(#spark3)" isAnimationActive={true} />
+                <Area type="monotone" dataKey="val" stroke="#f59e0b" strokeWidth={2.5} fillOpacity={1} fill="url(#spark3)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -743,7 +696,7 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="val" stroke="#0ea5e9" strokeWidth={2.5} fillOpacity={1} fill="url(#spark4)" isAnimationActive={true} />
+                <Area type="monotone" dataKey="val" stroke="#0ea5e9" strokeWidth={2.5} fillOpacity={1} fill="url(#spark4)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -780,7 +733,7 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="val" stroke="#6366f1" strokeWidth={2.5} fillOpacity={1} fill="url(#spark5)" isAnimationActive={true} />
+                <Area type="monotone" dataKey="val" stroke="#6366f1" strokeWidth={2.5} fillOpacity={1} fill="url(#spark5)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -817,7 +770,7 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#ec4899" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="val" stroke="#ec4899" strokeWidth={2.5} fillOpacity={1} fill="url(#spark6)" isAnimationActive={true} />
+                <Area type="monotone" dataKey="val" stroke="#ec4899" strokeWidth={2.5} fillOpacity={1} fill="url(#spark6)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -854,7 +807,7 @@ export default function DashboardPage() {
                     <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="val" stroke="#f59e0b" strokeWidth={2.5} fillOpacity={1} fill="url(#spark7)" isAnimationActive={true} />
+                <Area type="monotone" dataKey="val" stroke="#f59e0b" strokeWidth={2.5} fillOpacity={1} fill="url(#spark7)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -871,7 +824,7 @@ export default function DashboardPage() {
               <Clock className="h-4 w-4 text-blue-500" />
               Actual Logged Time vs Expected Hours (Hours)
             </h3>
-            <div className="h-72 w-full">
+            <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={hourlyChartData} margin={{
                 top: 25,
@@ -919,7 +872,7 @@ export default function DashboardPage() {
                   </Area>
                 </AreaChart>
               </ResponsiveContainer>
-            </div>
+            </LazyChartMount>
           </div>
 
           {/* Handled Calls Vertical Bar Chart */}
@@ -928,7 +881,7 @@ export default function DashboardPage() {
               <Phone className="h-4 w-4 text-emerald-500" />
               Handled Calls (Actual vs Target)
             </h3>
-            <div className="h-72 w-full">
+            <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hourlyChartData} margin={{
                 top: 25,
@@ -976,7 +929,7 @@ export default function DashboardPage() {
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            </div>
+            </LazyChartMount>
           </div>
         </div>
 
@@ -988,7 +941,7 @@ export default function DashboardPage() {
               <Zap className="h-4 w-4 text-violet-500" />
               Average Talk Time vs Average Hold Time (Seconds)
             </h3>
-            <div className="h-72 w-full">
+            <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={hourlyChartData} margin={{
                 top: 35,
@@ -1037,7 +990,7 @@ export default function DashboardPage() {
                   </Line>
                 </LineChart>
               </ResponsiveContainer>
-            </div>
+            </LazyChartMount>
           </div>
 
           {/* Phone Occupancy Donut Chart */}
@@ -1095,7 +1048,7 @@ export default function DashboardPage() {
               <Mail className="h-4 w-4 text-indigo-500" />
               Email Processing & Remaining Capacity (Totals)
             </h3>
-            <div className="h-72 w-full">
+            <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hourlyChartData} layout="vertical" margin={{
                 top: 10,
@@ -1143,7 +1096,7 @@ export default function DashboardPage() {
                   <Bar dataKey="Email Capacity" fill="url(#emailCapacityGradient)" stackId="a" radius={[0, 6, 6, 0]} name="Capacity Left" />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
+            </LazyChartMount>
           </div>
 
           {/* Actual Efficiency Gauge Chart */}
@@ -1165,7 +1118,7 @@ export default function DashboardPage() {
                 ];
 
                 return (
-                  <div className="w-full h-[100px]">
+                  <LazyChartMount heightClass="h-[100px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
                         <Pie
@@ -1180,11 +1133,11 @@ export default function DashboardPage() {
                           dataKey="value"
                           stroke="none"
                           cornerRadius={10}
-                          isAnimationActive={true}
+                          isAnimationActive={false}
                         />
                       </PieChart>
                     </ResponsiveContainer>
-                  </div>
+                  </LazyChartMount>
                 );
               })()}
               
