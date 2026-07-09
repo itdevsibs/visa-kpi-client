@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { ChevronDown, Search, Check } from "lucide-react";
-import { Button } from "./button"; // assuming button exists or just standard button
 
 export default function EmployeeFilterDropdown({
   label = "EMPLOYEE",
@@ -8,10 +7,12 @@ export default function EmployeeFilterDropdown({
   selectedIds = ["all"],
   onChange,
   placeholder = "Search team members...",
+  selectionMode = "deferred",
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const dropdownRef = useRef(null);
+  const isImmediate = selectionMode === "immediate";
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -44,44 +45,20 @@ export default function EmployeeFilterDropdown({
     return `${selectedIds.length} Employees`;
   }, [selectedIds, employees]);
 
-  const handleToggle = (id) => {
-    let newIds = [...selectedIds];
-    
-    if (id === "all") {
-      newIds = ["all"];
-    } else {
-      if (newIds.includes("all")) {
-        newIds = newIds.filter((i) => i !== "all");
-      }
-      
-      if (newIds.includes(id)) {
-        newIds = newIds.filter((i) => i !== id);
-        if (newIds.length === 0) {
-          newIds = ["all"];
-        }
-      } else {
-        newIds.push(id);
-      }
-    }
-    
-    // We update parent immediately or only on Apply? 
-    // The image shows "Apply Filters", implying we might need internal state.
-    // Let's use internal state for pending selections so "Apply" actually does something.
-    onChange(newIds);
-  };
-
-  // Wait, if there's an "Apply Filters" and "Reset to All" button, we should have internal state!
   const [pendingIds, setPendingIds] = useState(selectedIds);
+  const activeIds = isImmediate ? selectedIds : pendingIds;
 
   useEffect(() => {
     if (isOpen) {
-      setPendingIds(selectedIds);
+      if (!isImmediate) {
+        setPendingIds(selectedIds);
+      }
       setSearchQuery("");
     }
-  }, [isOpen, selectedIds]);
+  }, [isOpen, selectedIds, isImmediate]);
 
-  const handlePendingToggle = (id) => {
-    let newIds = [...pendingIds];
+  const handleSelectionToggle = (id) => {
+    let newIds = [...activeIds];
     
     if (id === "all") {
       newIds = ["all"];
@@ -99,19 +76,32 @@ export default function EmployeeFilterDropdown({
         newIds.push(id);
       }
     }
-    setPendingIds(newIds);
+
+    if (isImmediate) {
+      onChange(newIds);
+    } else {
+      setPendingIds(newIds);
+    }
   };
 
   const handleApply = () => {
-    onChange(pendingIds);
+    if (!isImmediate) {
+      onChange(pendingIds);
+    }
     setIsOpen(false);
   };
 
   const handleReset = () => {
-    setPendingIds(["all"]);
+    if (!isImmediate) {
+      setPendingIds(["all"]);
+    }
     onChange(["all"]);
-    setIsOpen(false);
+    if (!isImmediate) {
+      setIsOpen(false);
+    }
   };
+
+  const selectedCount = activeIds.includes("all") ? 0 : activeIds.length;
 
   return (
     <div className="flex flex-col gap-1.5 w-full shrink-0 relative" ref={dropdownRef}>
@@ -155,34 +145,34 @@ export default function EmployeeFilterDropdown({
               <button
                 type="button"
                 role="option"
-                aria-selected={pendingIds.includes("all")}
-                onClick={() => handlePendingToggle("all")}
+                aria-selected={activeIds.includes("all")}
+                onClick={() => handleSelectionToggle("all")}
                 className="w-full text-left px-3 py-2.5 rounded-xl flex items-center gap-3 hover:bg-slate-50 transition-colors"
               >
                 <div
                   className={`h-5 w-5 rounded-full flex items-center justify-center shrink-0 transition-colors ${
-                    pendingIds.includes("all")
+                    activeIds.includes("all")
                       ? "bg-blue-600 border-none"
                       : "border border-slate-300 bg-white"
                   }`}
                 >
-                  {pendingIds.includes("all") && <Check className="h-3 w-3 text-white stroke-[3]" />}
+                  {activeIds.includes("all") && <Check className="h-3 w-3 text-white stroke-[3]" />}
                 </div>
-                <span className={`font-semibold text-sm ${pendingIds.includes("all") ? "text-blue-600" : "text-slate-700"}`}>
+                <span className={`font-semibold text-sm ${activeIds.includes("all") ? "text-blue-600" : "text-slate-700"}`}>
                   All Employees
                 </span>
               </button>
             )}
 
             {filteredEmployees.map((emp) => {
-              const isSelected = pendingIds.includes(emp.id);
+              const isSelected = activeIds.includes(emp.id);
               return (
                 <button
                   type="button"
                   role="option"
                   aria-selected={isSelected}
                   key={emp.id}
-                  onClick={() => handlePendingToggle(emp.id)}
+                  onClick={() => handleSelectionToggle(emp.id)}
                   className="w-full text-left px-3 py-2 rounded-xl flex items-center gap-3 hover:bg-slate-50 transition-colors"
                 >
                   <div
@@ -226,6 +216,11 @@ export default function EmployeeFilterDropdown({
               className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-5 py-2 rounded-xl transition-all shadow-sm active:scale-95"
             >
               Apply Filters
+              {selectedCount > 0 && (
+                <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-white/20 px-1.5 text-[10px] text-white">
+                  {selectedCount}
+                </span>
+              )}
             </button>
           </div>
         </div>

@@ -41,3 +41,7 @@ Thumbs.db
 # Codex
 .codex
 .agents
+
+
+.skills-lock.json
+skills-lock.json

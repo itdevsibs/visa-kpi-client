@@ -4,18 +4,14 @@ import { useRoster } from "../../../services/context/RosterContext.jsx";
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef, useTransition } from 'react';
-import { motion } from "framer-motion";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useState, useTransition } from 'react';
 import { Button } from "../../../components/ui/button.jsx";
-import { Badge } from "../../../components/ui/badge.jsx";
-import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card.jsx";
-import { Input } from "../../../components/ui/input.jsx";
 
-import { X, Search, ChevronDown, ChevronUp, SlidersHorizontal, Download, FileSpreadsheet, FileText, Printer, User, Phone, Mail, Award, Calendar, ChevronLeft, ChevronRight, Activity, Check } from 'lucide-react';
-import { AnimatedNumber } from "../../../components/ui/motion.jsx";
+import { X, Search, ChevronDown, ChevronUp, SlidersHorizontal, Download, FileSpreadsheet, FileText, Printer, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import MobilePerformanceCard from "./MobilePerformanceCard.jsx";
 import { PerformanceStatsBar } from "./PerformanceStatsBar.jsx";
 import EmployeeFilterDropdown from "../../../components/ui/EmployeeFilterDropdown.jsx";
+import LazyChartMount from "../../../components/ui/LazyChartMount.jsx";
 import { aggregateKPIRecords, generateHourlyRecord } from '../../../lib/utils/mockData.js';
 import { useDebounce } from "../../../hooks/useDebounce.js";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, LabelList } from 'recharts';
@@ -53,26 +49,14 @@ const HOURS = [{
 export default function PerformancePage() {
   const { filteredEmployeesForPerformanceAndDashboard: employees, userRole, selectedSimUserEmail: currentUserEmail } = useRoster();
   const [selectedEmpFilters, setSelectedEmpFilters] = useState(['all']);
-  const [isEmpFilterDropdownOpen, setIsEmpFilterDropdownOpen] = useState(false);
-  const dropdownRef = useRef(null);
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setIsEmpFilterDropdownOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
   const [selectedDate, setSelectedDate] = useState('2026-07-07');
   const [isPending, startTransition] = useTransition();
   const [fromHour, setFromHour] = useState(8);
   const [toHour, setToHour] = useState(17);
   const [intervalType, setIntervalType] = useState('Daily');
   const [searchQuery, setSearchQuery] = useState('');
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const debouncedSearchQuery = useDebounce(deferredSearchQuery, 300);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [selectedRowEmployee, setSelectedRowEmployee] = useState(null);
@@ -198,7 +182,13 @@ export default function PerformancePage() {
 
   // Apply Search
   const searchedData = useMemo(() => {
-    return baseAggregatedData.filter(item => item.employeeName.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) || item.position.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) || item.team.toLowerCase().includes(debouncedSearchQuery.toLowerCase()));
+    const query = debouncedSearchQuery.toLowerCase();
+    return baseAggregatedData.filter(item => {
+      const employeeName = String(item.employeeName ?? '').toLowerCase();
+      const position = String(item.position ?? '').toLowerCase();
+      const team = String(item.team ?? '').toLowerCase();
+      return employeeName.includes(query) || position.includes(query) || team.includes(query);
+    });
   }, [baseAggregatedData, debouncedSearchQuery]);
 
   // Apply Sorting
@@ -258,20 +248,27 @@ export default function PerformancePage() {
   }, [baseAggregatedData]);
 
   // Time formatting helper
-  const formatSeconds = sec => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.round(sec % 3600 / 60);
-    return `${h}h ${m}m`;
-  };
-  const handleSort = column => {
-    if (sortColumn === column) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortColumn(column);
+  const formatSeconds = (sec = 0) => {
+  const safeSec = Number.isFinite(Number(sec)) ? Number(sec) : 0;
+  const h = Math.floor(safeSec / 3600);
+  const m = Math.round((safeSec % 3600) / 60);
+  return `${h}h ${m}m`;
+};
+  const handleSort = useCallback((column) => {
+    setSortColumn((prevColumn) => {
+      if (prevColumn === column) {
+        setSortDirection((prevDirection) =>
+          prevDirection === 'asc' ? 'desc' : 'asc'
+        );
+        return prevColumn;
+      }
+
       setSortDirection('asc');
-    }
+      return column;
+    });
+
     setCurrentPage(1);
-  };
+  }, []);
   const handleExport = async (format) => {
     window.dispatchEvent(new CustomEvent('show-toast', { detail: `Compiling detailed employee KPI report in ${format} format...` }));
     
@@ -358,62 +355,69 @@ export default function PerformancePage() {
         </div>
 
         {/* Action controls */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Column Picker Toggler */}
-          <div className="relative">
-            <Button variant="outline"  onClick={() => setIsColumnPickerOpen(!isColumnPickerOpen)} className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 transition-all cursor-pointer">
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Columns</span>
-            </Button>
-            {isColumnPickerOpen && <div className="absolute right-0 mt-1.5 w-56 bg-white border border-slate-200 rounded-xl shadow-xl z-30 py-2 text-left">
-                <p className="px-3 pb-1.5 pt-1 text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">
-                  Visible Columns
-                </p>
-                <div className="max-h-60 overflow-y-auto px-1 py-1 space-y-0.5">
-                  {Object.keys(visibleColumns).map(col => <label key={col} className="flex items-center gap-2 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 rounded-lg cursor-pointer">
-                      <input type="checkbox" checked={visibleColumns[col]} onChange={() => toggleColumn(col)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5" />
-                      <span className="capitalize">{col.replace(/([A-Z])/g, ' $1').trim()}</span>
-                    </label>)}
-                </div>
-              </div>}
-          </div>
+<div className="flex flex-wrap items-center gap-2">
+  <Button
+    variant="outline"
+    onClick={() => handleExport("CSV")}
+    className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 transition-all cursor-pointer"
+  >
+    <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+    <span className="hidden sm:inline">Export CSV</span>
+  </Button>
 
-          <Button variant="outline"  onClick={() => handleExport('CSV')} className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 transition-all cursor-pointer">
-            <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
-            <span className="hidden sm:inline">Export CSV</span>
-          </Button>
+  <Button
+    variant="outline"
+    onClick={() => handleExport("Excel")}
+    className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 transition-all cursor-pointer"
+  >
+    <Download className="h-3.5 w-3.5 text-blue-600" />
+    <span className="hidden sm:inline">Excel</span>
+  </Button>
 
-          <Button variant="outline"  onClick={() => handleExport('Excel')} className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 transition-all cursor-pointer">
-            <Download className="h-3.5 w-3.5 text-blue-600" />
-            <span className="hidden sm:inline">Excel</span>
-          </Button>
-
-          <Button variant="outline"  onClick={() => handleExport('PDF')} className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 transition-all cursor-pointer">
-            <FileText className="h-3.5 w-3.5 text-red-500" />
-            <span className="hidden sm:inline">PDF</span>
-          </Button>
-
-          <Button variant="outline"  onClick={() => window.print()} className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 transition-all cursor-pointer">
-            <Printer className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Print</span>
-          </Button>
-        </div>
+  <Button
+    variant="outline"
+    onClick={() => window.print()}
+    className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium px-3 py-2 rounded-xl border border-slate-200 transition-all cursor-pointer"
+  >
+    <Printer className="h-3.5 w-3.5" />
+    <span className="hidden sm:inline">Print</span>
+  </Button>
+</div>
       </div>
 
       {/* Dynamic Statistics Bar above Table */}
-      <PerformanceStatsBar statistics={statistics} />
+      <div className="animate-slide-up-fade">
+  <PerformanceStatsBar statistics={statistics} />
+</div>
 
       {/* Search and Filters Bar */}
       <div className="flex flex-col md:flex-row items-end gap-4 bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm w-full">
         {/* Search */}
-        <div className="flex flex-col gap-1.5 w-full md:flex-1 shrink-0">
+        <div className="flex flex-col gap-1.5 w-full md:flex-[1.35] shrink-0">
           <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">Search</label>
-          <div className="relative">
-            <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input type="text" placeholder="Search name, position, team..." value={searchQuery} onChange={e => {
-            setSearchQuery(e.target.value);
-            setCurrentPage(1);
-          }} className="sibs-filter-input w-full pl-9 pr-4 bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200" />
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1 min-w-0">
+              <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input type="text" placeholder="Search name, position, team..." value={searchQuery} onChange={e => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }} className="sibs-filter-input w-full pl-9 pr-4 bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200" />
+            </div>
+            {userRole !== 'Employee' && (
+              <div className="w-full sm:w-48 shrink-0">
+                <EmployeeFilterDropdown
+                  label=""
+                  employees={activeEmployees}
+                  selectedIds={selectedEmpFilters}
+                  onChange={(newIds) => {
+                    startTransition(() => setSelectedEmpFilters(newIds));
+                    setCurrentPage(1);
+                  }}
+                  placeholder="Search team members..."
+                  selectionMode="immediate"
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -449,45 +453,32 @@ export default function PerformancePage() {
         {/* Interval Selector */}
         <div className="flex flex-col gap-1.5 w-full md:flex-1 shrink-0">
           <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">Interval</label>
-          <div className="inline-flex rounded-lg border border-slate-200 p-1 bg-slate-50 min-h-[38px] w-full relative">
-            <button type="button" onClick={() => startTransition(() => setIntervalType('Daily'))} className={`relative flex items-center justify-center gap-2 px-4 py-1.5 rounded-md font-medium text-xs transition-all duration-300 cursor-pointer border-none flex-1 z-10 ${intervalType === 'Daily' ? 'text-white' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200/50'}`}>
-              {intervalType === 'Daily' && (
-                <motion.div
-                  layoutId="intervalTabPill"
-                  className="absolute inset-0 bg-blue-600 rounded-md shadow-md shadow-blue-500/20"
-                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                />
-              )}
-              <span className="relative z-10">Daily</span>
+          <div className="inline-flex min-h-[38px] w-full rounded-lg border border-slate-200 bg-slate-50 p-1">
+            <button
+              type="button"
+              onClick={() => startTransition(() => setIntervalType('Daily'))}
+              className={`flex flex-1 cursor-pointer items-center justify-center rounded-md px-4 py-1.5 text-xs font-medium transition-colors ${
+                intervalType === 'Daily'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : 'text-slate-500 hover:bg-slate-200/50 hover:text-slate-900'
+              }`}
+            >
+              Daily
             </button>
-            <button type="button" onClick={() => startTransition(() => setIntervalType('Hourly'))} className={`relative flex items-center justify-center gap-2 px-4 py-1.5 rounded-md font-medium text-xs transition-all duration-300 cursor-pointer border-none flex-1 z-10 ${intervalType === 'Hourly' ? 'text-white' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-200/50'}`}>
-              {intervalType === 'Hourly' && (
-                <motion.div
-                  layoutId="intervalTabPill"
-                  className="absolute inset-0 bg-blue-600 rounded-md shadow-md shadow-blue-500/20"
-                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                />
-              )}
-              <span className="relative z-10">Hourly</span>
+
+            <button
+              type="button"
+              onClick={() => startTransition(() => setIntervalType('Hourly'))}
+              className={`flex flex-1 cursor-pointer items-center justify-center rounded-md px-4 py-1.5 text-xs font-medium transition-colors ${
+                intervalType === 'Hourly'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : 'text-slate-500 hover:bg-slate-200/50 hover:text-slate-900'
+              }`}
+            >
+              Hourly
             </button>
           </div>
         </div>
-
-        {/* Employee quick filter (restricted if Employee) */}
-        {userRole !== 'Employee' && (
-          <div className="w-full md:flex-1 shrink-0">
-            <EmployeeFilterDropdown
-              label="Employee"
-              employees={activeEmployees}
-              selectedIds={selectedEmpFilters}
-              onChange={(newIds) => {
-                startTransition(() => setSelectedEmpFilters(newIds));
-                setCurrentPage(1);
-              }}
-              placeholder="Search team members..."
-            />
-          </div>
-        )}
       </div>
 
       {/* Main Table Card */}
@@ -701,32 +692,71 @@ export default function PerformancePage() {
       </div>
 
         {/* Pagination Control Bar */}
-        <div className="bg-slate-50 px-4 py-3 border-t border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-slate-500 font-sans">
-            <span>Show</span>
-            <select value={pageSize} onChange={e => {
-            setPageSize(parseInt(e.target.value));
-            setCurrentPage(1);
-          }} className="border border-slate-200 rounded px-1.5 py-0.5 bg-white text-slate-700 outline-none">
-              {[5, 10, 20, 50].map(size => <option key={size} value={size}>{size}</option>)}
-            </select>
-            <span>records per page</span>
-          </div>
+<div className="rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm">
+  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+    {/* Page size */}
+    <div className="flex items-center justify-center gap-2 text-xs text-slate-500 font-sans sm:justify-start">
+      <span className="shrink-0">Show</span>
 
-          <div className="text-xs text-slate-400 font-mono">
-            Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, sortedData.length)} of {sortedData.length} records
-          </div>
+      <select
+        value={pageSize}
+        onChange={(e) => {
+          setPageSize(parseInt(e.target.value));
+          setCurrentPage(1);
+        }}
+        className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+      >
+        {[5, 10, 20, 50].map((size) => (
+          <option key={size} value={size}>
+            {size}
+          </option>
+        ))}
+      </select>
 
-          <div className="flex items-center gap-1">
-            <Button variant="outline"  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1} className="p-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed">
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <span className="text-xs font-mono px-3 text-slate-700">Page {currentPage} of {totalPages}</span>
-            <Button variant="outline"  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages} className="p-1 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed">
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+      <span className="shrink-0">per page</span>
+    </div>
+
+    {/* Records count */}
+    <div className="text-center text-xs text-slate-400 font-mono leading-relaxed">
+      Showing{" "}
+      <span className="font-bold text-slate-600">
+        {sortedData.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}
+      </span>{" "}
+      to{" "}
+      <span className="font-bold text-slate-600">
+        {Math.min(currentPage * pageSize, sortedData.length)}
+      </span>{" "}
+      of{" "}
+      <span className="font-bold text-slate-600">{sortedData.length}</span>{" "}
+      records
+    </div>
+
+    {/* Page controls */}
+    <div className="flex items-center justify-center gap-2 sm:justify-end">
+      <Button
+        variant="outline"
+        onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+        disabled={currentPage === 1}
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white p-0 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </Button>
+
+      <span className="min-w-[78px] text-center text-xs font-mono font-semibold text-slate-700">
+        Page {currentPage} of {totalPages}
+      </span>
+
+      <Button
+        variant="outline"
+        onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+        disabled={currentPage === totalPages}
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white p-0 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <ChevronRight className="h-4 w-4" />
+      </Button>
+    </div>
+  </div>
+</div>
       {/* Employee Detail Drawer (Slide Out Panel from Right) */}
       {selectedRowEmployee && <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex justify-end animate-fade-in" onClick={() => setSelectedRowEmployee(null)}>
           <div className="w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-slide-left" onClick={e => e.stopPropagation()}>
@@ -776,7 +806,7 @@ export default function PerformancePage() {
               {/* Hourly Logs Chart */}
               <div>
                 <h4 className="sibs-section-label mb-3">Hourly Calls and Logged Time</h4>
-                <div className="sibs-chart-container h-56">
+                <LazyChartMount heightClass="h-56" className="sibs-chart-container">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={hourlyDrawerData} margin={{ top: 30, right: 10, left: 10, bottom: 5 }}>
                       <defs>
@@ -801,13 +831,13 @@ export default function PerformancePage() {
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
-                </div>
+                </LazyChartMount>
               </div>
 
               {/* Efficiency Trend Line */}
               <div>
                 <h4 className="sibs-section-label mb-3">Hourly Efficiency Trend</h4>
-                <div className="sibs-chart-container h-56">
+                <LazyChartMount heightClass="h-56" className="sibs-chart-container">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={hourlyDrawerData} margin={{ top: 30, right: 15, left: 10, bottom: 5 }}>
                       <defs>
@@ -825,7 +855,7 @@ export default function PerformancePage() {
                       </Line>
                     </LineChart>
                   </ResponsiveContainer>
-                </div>
+                </LazyChartMount>
               </div>
 
               {/* Historical Performance List */}
