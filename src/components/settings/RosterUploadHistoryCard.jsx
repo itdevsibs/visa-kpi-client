@@ -21,10 +21,10 @@ export default function RosterUploadHistoryCard({
 
           <div className="min-w-0">
             <h3 className="truncate text-sm font-black text-slate-900">
-              Excel / CSV Employee KPI Roster
+              Excel / US Visa KPI
             </h3>
             <p className="mt-0.5 text-[11px] font-medium text-slate-400">
-              Upload Excel employee KPI roster files and review import history
+              Upload Excel US Visa KPI files and review import history
             </p>
           </div>
         </div>
