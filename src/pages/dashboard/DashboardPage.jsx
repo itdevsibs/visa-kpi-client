@@ -4,16 +4,15 @@ import { useRoster } from "../../services/context/RosterContext.jsx";
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { Button } from "../../components/ui/button.jsx";
 
 import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList } from 'recharts';
-import { Clock, Phone, ArrowUpRight, ArrowDownRight, RefreshCw, FileText, Download, Printer, User, Mail, Award, Percent, Zap, BarChart3, HelpCircle, ChevronDown, ChevronLeft, ChevronRight, Search, CalendarDays, Check } from 'lucide-react';
+import { Clock, Phone, ArrowUpRight, ArrowDownRight, RefreshCw, FileText, Download, Printer, User, Mail, Award, Percent, Zap, BarChart3, HelpCircle } from 'lucide-react';
 import { AnimatedNumber } from "../../components/ui/motion.jsx";
 import { aggregateKPIRecords, generateHourlyRecord } from '../../lib/utils/mockData.js';
+import EmployeeFilterDropdown from "../../components/ui/EmployeeFilterDropdown.jsx";
 import LazyChartMount from "../../components/ui/LazyChartMount.jsx";
-import { apiGet } from "../../lib/axios/api.js";
 const HOURS = [{
   value: 8,
   label: '08:00 AM'
@@ -51,1085 +50,8 @@ const HOURS = [{
 // Normalize HOURS labels if needed
 HOURS[7].label = '03:00 PM'; // Fix any typo safely
 
-const KRONOS_ACCOUNT = 'US Visa';
-const KRONOS_PAGE_LIMIT = 500;
-const KRONOS_FETCH_CONCURRENCY = 6;
-const KRONOS_CACHE_TTL_MS = 10 * 60 * 1000;
-const KRONOS_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const KRONOS_CACHE_KEY = 'sibs-us-visa-kronos-employees-v3';
-
-let kronosEmployeesMemoryCache = null;
-let kronosEmployeesMemoryCacheSavedAt = 0;
-let kronosEmployeesInFlightPromise = null;
-
-function cleanText(value) {
-  return String(value ?? '').trim();
-}
-
-function normalizeComparableText(value) {
-  return cleanText(value).toLowerCase().replace(/\s+/g, ' ');
-}
-
-function getKronosResponseRows(response) {
-  const candidates = [
-    response?.data,
-    response?.data?.data,
-    response?.data?.employees,
-    response?.employees,
-    response?.rows,
-  ];
-
-  return candidates.find(Array.isArray) || [];
-}
-
-function getKronosPagination(response) {
-  return response?.pagination || response?.data?.pagination || {};
-}
-
-function normalizeKronosEmployee(employee = {}, rowIndex = 0) {
-  const sibsId = cleanText(
-    employee.sibsId ||
-      employee.sibs_id ||
-      employee.employeeId ||
-      employee.employee_id ||
-      employee.id
-  );
-
-  const fullName = cleanText(
-    employee.fullName ||
-      employee.full_name ||
-      employee.employeeName ||
-      employee.employee_name ||
-      employee.name
-  );
-
-  const email = cleanText(
-    employee.email || employee.emailAddress || employee.email_address
-  );
-
-  const account = cleanText(
-    employee.account || employee.accountName || employee.account_name
-  );
-
-  const rawStatus = cleanText(
-    employee.status ||
-      employee.employmentStatus ||
-      employee.employment_status
-  );
-
-  const normalizedStatus = normalizeComparableText(rawStatus);
-  const inactiveStatuses = new Set([
-    'inactive',
-    'resigned',
-    'terminated',
-    'separated',
-    'awol',
-  ]);
-  const isActive = !inactiveStatuses.has(normalizedStatus);
-
-  const id = cleanText(
-    employee.id ||
-      employee.employeeId ||
-      employee.employee_id ||
-      sibsId ||
-      email ||
-      `kronos-${rowIndex}`
-  );
-
-  return {
-    ...employee,
-    id,
-    employeeId: id,
-    employee_id: id,
-    sibsId,
-    sibs_id: sibsId,
-    fullName: fullName || sibsId || email || 'Unnamed Employee',
-    employee_name: fullName || sibsId || email || 'Unnamed Employee',
-    name: fullName || sibsId || email || 'Unnamed Employee',
-    email,
-    account,
-    kronos_status: rawStatus,
-    status: isActive ? 'Active' : rawStatus || 'Inactive',
-    employment_status: isActive ? 'Active' : rawStatus || 'Inactive',
-  };
-}
-
-function isUsVisaEmployee(employee = {}) {
-  const account =
-    employee.account || employee.accountName || employee.account_name;
-
-  return (
-    normalizeComparableText(account) ===
-    normalizeComparableText(KRONOS_ACCOUNT)
-  );
-}
-
-function sortAndDeduplicateKronosEmployees(rows = []) {
-  const normalizedEmployees = rows
-    .filter(isUsVisaEmployee)
-    .map(normalizeKronosEmployee)
-    .filter((employee) => employee.id && employee.employee_name);
-
-  return Array.from(
-    new Map(
-      normalizedEmployees.map((employee) => [employee.id, employee])
-    ).values()
-  ).sort((firstEmployee, secondEmployee) =>
-    firstEmployee.employee_name.localeCompare(
-      secondEmployee.employee_name,
-      undefined,
-      { sensitivity: 'base' }
-    )
-  );
-}
-
-function readKronosEmployeeCache() {
-  const now = Date.now();
-
-  if (
-    Array.isArray(kronosEmployeesMemoryCache) &&
-    kronosEmployeesMemoryCache.length > 0 &&
-    now - kronosEmployeesMemoryCacheSavedAt <= KRONOS_CACHE_MAX_AGE_MS
-  ) {
-    return {
-      employees: kronosEmployeesMemoryCache,
-      savedAt: kronosEmployeesMemoryCacheSavedAt,
-      isFresh:
-        now - kronosEmployeesMemoryCacheSavedAt <= KRONOS_CACHE_TTL_MS,
-    };
-  }
-
-  if (typeof window === 'undefined') {
-    return { employees: [], savedAt: 0, isFresh: false };
-  }
-
-  try {
-    const cachedValue = window.sessionStorage.getItem(KRONOS_CACHE_KEY);
-
-    if (!cachedValue) {
-      return { employees: [], savedAt: 0, isFresh: false };
-    }
-
-    const parsedCache = JSON.parse(cachedValue);
-    const savedAt = Number(parsedCache?.savedAt || 0);
-    const cachedEmployees = Array.isArray(parsedCache?.employees)
-      ? parsedCache.employees
-      : [];
-
-    if (
-      cachedEmployees.length === 0 ||
-      !savedAt ||
-      now - savedAt > KRONOS_CACHE_MAX_AGE_MS
-    ) {
-      window.sessionStorage.removeItem(KRONOS_CACHE_KEY);
-      return { employees: [], savedAt: 0, isFresh: false };
-    }
-
-    kronosEmployeesMemoryCache = cachedEmployees;
-    kronosEmployeesMemoryCacheSavedAt = savedAt;
-
-    return {
-      employees: cachedEmployees,
-      savedAt,
-      isFresh: now - savedAt <= KRONOS_CACHE_TTL_MS,
-    };
-  } catch (error) {
-    console.warn(
-      '[US VISA KPI DASHBOARD] Unable to read the Kronos employee cache:',
-      error
-    );
-
-    return { employees: [], savedAt: 0, isFresh: false };
-  }
-}
-
-function writeKronosEmployeeCache(employees = []) {
-  if (!Array.isArray(employees) || employees.length === 0) {
-    return;
-  }
-
-  const savedAt = Date.now();
-
-  kronosEmployeesMemoryCache = employees;
-  kronosEmployeesMemoryCacheSavedAt = savedAt;
-
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  try {
-    window.sessionStorage.setItem(
-      KRONOS_CACHE_KEY,
-      JSON.stringify({ savedAt, employees })
-    );
-  } catch (error) {
-    console.warn(
-      '[US VISA KPI DASHBOARD] Unable to save the Kronos employee cache:',
-      error
-    );
-  }
-}
-
-function getTotalKronosPages(pagination = {}, firstPageRows = []) {
-  const explicitTotalPages = Number(
-    pagination?.totalPages ||
-      pagination?.total_pages ||
-      pagination?.lastPage ||
-      pagination?.last_page ||
-      0
-  );
-
-  if (Number.isFinite(explicitTotalPages) && explicitTotalPages > 0) {
-    return Math.max(1, Math.ceil(explicitTotalPages));
-  }
-
-  const totalRows = Number(
-    pagination?.total ||
-      pagination?.totalRows ||
-      pagination?.total_rows ||
-      pagination?.count ||
-      0
-  );
-
-  const pageSize = Number(
-    pagination?.limit ||
-      pagination?.pageSize ||
-      pagination?.page_size ||
-      KRONOS_PAGE_LIMIT
-  );
-
-  if (
-    Number.isFinite(totalRows) &&
-    totalRows > 0 &&
-    Number.isFinite(pageSize) &&
-    pageSize > 0
-  ) {
-    return Math.max(1, Math.ceil(totalRows / pageSize));
-  }
-
-  return firstPageRows.length >= KRONOS_PAGE_LIMIT ? 2 : 1;
-}
-
-async function requestKronosEmployeePage(page) {
-  return apiGet('/users/kronos-employees', {
-    params: {
-      page,
-      limit: KRONOS_PAGE_LIMIT,
-      search: '',
-      department: 'All',
-      account: KRONOS_ACCOUNT,
-      includeDepartments: 0,
-      includeAccounts: 0,
-    },
-  });
-}
-
-async function fetchUsVisaKronosEmployees() {
-  if (kronosEmployeesInFlightPromise) {
-    return kronosEmployeesInFlightPromise;
-  }
-
-  kronosEmployeesInFlightPromise = (async () => {
-    const firstResponse = await requestKronosEmployeePage(1);
-    const firstRows = getKronosResponseRows(firstResponse);
-    const firstPagination = getKronosPagination(firstResponse);
-    const totalPages = getTotalKronosPages(firstPagination, firstRows);
-    const allRows = [...firstRows];
-
-    if (totalPages > 1) {
-      const remainingPages = Array.from(
-        { length: totalPages - 1 },
-        (_, index) => index + 2
-      );
-
-      for (
-        let index = 0;
-        index < remainingPages.length;
-        index += KRONOS_FETCH_CONCURRENCY
-      ) {
-        const pageBatch = remainingPages.slice(
-          index,
-          index + KRONOS_FETCH_CONCURRENCY
-        );
-
-        const pageResponses = await Promise.all(
-          pageBatch.map(requestKronosEmployeePage)
-        );
-
-        pageResponses.forEach((response) => {
-          allRows.push(...getKronosResponseRows(response));
-        });
-      }
-    }
-
-    const uniqueEmployees = sortAndDeduplicateKronosEmployees(allRows);
-    writeKronosEmployeeCache(uniqueEmployees);
-
-    return uniqueEmployees;
-  })();
-
-  try {
-    return await kronosEmployeesInFlightPromise;
-  } finally {
-    kronosEmployeesInFlightPromise = null;
-  }
-}
-
-
-const FILTER_EDGE = 'rounded-[10px]';
-
-function DashboardDropdownPortal({
-  open,
-  anchorRef,
-  children,
-  onClose,
-  maxHeight = 300,
-  minWidth = 0,
-}) {
-  const dropdownRef = useRef(null);
-  const [style, setStyle] = useState({
-    top: 0,
-    left: 0,
-    width: 0,
-    maxHeight,
-  });
-
-  useLayoutEffect(() => {
-    if (!open || !anchorRef?.current) {
-      return undefined;
-    }
-
-    function updatePosition() {
-      const anchor = anchorRef.current;
-
-      if (!anchor) {
-        return;
-      }
-
-      const rect = anchor.getBoundingClientRect();
-      const viewportWidth =
-        window.innerWidth || document.documentElement.clientWidth || 0;
-      const viewportHeight =
-        window.innerHeight || document.documentElement.clientHeight || 0;
-
-      const gap = 8;
-      const safePadding = 8;
-      const dropdownWidth = Math.max(rect.width, minWidth);
-      const spaceBelow = viewportHeight - rect.bottom - gap - safePadding;
-      const spaceAbove = rect.top - gap - safePadding;
-      const shouldOpenUp = spaceBelow < 190 && spaceAbove > spaceBelow;
-      const availableHeight = shouldOpenUp ? spaceAbove : spaceBelow;
-      const cleanMaxHeight = Math.max(
-        170,
-        Math.min(maxHeight, Math.max(availableHeight, 170)),
-      );
-
-      const top = shouldOpenUp
-        ? Math.max(safePadding, rect.top - cleanMaxHeight - gap)
-        : Math.min(
-            rect.bottom + gap,
-            viewportHeight - cleanMaxHeight - safePadding,
-          );
-
-      const maxLeft = Math.max(
-        safePadding,
-        viewportWidth - dropdownWidth - safePadding,
-      );
-
-      setStyle({
-        top,
-        left: Math.min(Math.max(safePadding, rect.left), maxLeft),
-        width: dropdownWidth,
-        maxHeight: cleanMaxHeight,
-      });
-    }
-
-    updatePosition();
-
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [anchorRef, maxHeight, minWidth, open]);
-
-  useEffect(() => {
-    if (!open) {
-      return undefined;
-    }
-
-    function handleOutsideClick(event) {
-      const clickedAnchor = anchorRef?.current?.contains(event.target);
-      const clickedDropdown = dropdownRef.current?.contains(event.target);
-
-      if (!clickedAnchor && !clickedDropdown) {
-        onClose?.();
-      }
-    }
-
-    function handleKeyDown(event) {
-      if (event.key === 'Escape') {
-        onClose?.();
-      }
-    }
-
-    document.addEventListener('mousedown', handleOutsideClick);
-    document.addEventListener('touchstart', handleOutsideClick);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick);
-      document.removeEventListener('touchstart', handleOutsideClick);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [anchorRef, onClose, open]);
-
-  if (!open || typeof document === 'undefined') {
-    return null;
-  }
-
-  return createPortal(
-    <div
-      ref={dropdownRef}
-      onMouseDownCapture={(event) => event.stopPropagation()}
-      onTouchStartCapture={(event) => event.stopPropagation()}
-      className={`fixed z-[999999] overflow-hidden ${FILTER_EDGE} border border-[#D7DEE8] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]`}
-      style={{
-        top: `${style.top}px`,
-        left: `${style.left}px`,
-        width: `${style.width}px`,
-      }}
-    >
-      <div
-        className="sibs-scrollbar overflow-y-auto py-2"
-        style={{ maxHeight: `${style.maxHeight}px` }}
-      >
-        {children}
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-function DashboardEmployeeDropdown({
-  employees = [],
-  selectedIds = ['all'],
-  onChange,
-  disabled = false,
-}) {
-  const inputRef = useRef(null);
-  const [open, setOpen] = useState(false);
-  const [searchText, setSearchText] = useState('');
-
-  const allSelected =
-    selectedIds.length === 0 || selectedIds.includes('all');
-
-  const selectedLabel = useMemo(() => {
-    if (allSelected) {
-      return 'All Employees';
-    }
-
-    if (selectedIds.length === 1) {
-      return (
-        employees.find((employee) => employee.id === selectedIds[0])
-          ?.employee_name || 'Select Employee'
-      );
-    }
-
-    return `${selectedIds.length} Employees Selected`;
-  }, [allSelected, employees, selectedIds]);
-
-  const filteredEmployees = useMemo(() => {
-    const normalizedSearch = normalizeComparableText(searchText);
-    const selectedIdSet = new Set(
-      allSelected ? [] : selectedIds.filter((id) => id !== 'all'),
-    );
-
-    const matchingEmployees = normalizedSearch
-      ? employees.filter((employee) => {
-          const searchableText = normalizeComparableText(
-            [
-              employee.employee_name,
-              employee.email,
-              employee.sibsId,
-              employee.sibs_id,
-            ]
-              .filter(Boolean)
-              .join(' '),
-          );
-
-          return searchableText.includes(normalizedSearch);
-        })
-      : [...employees];
-
-    return matchingEmployees.sort((firstEmployee, secondEmployee) => {
-      const firstSelected = selectedIdSet.has(firstEmployee.id);
-      const secondSelected = selectedIdSet.has(secondEmployee.id);
-
-      if (firstSelected !== secondSelected) {
-        return firstSelected ? -1 : 1;
-      }
-
-      return String(firstEmployee.employee_name || '').localeCompare(
-        String(secondEmployee.employee_name || ''),
-        undefined,
-        { sensitivity: 'base' },
-      );
-    });
-  }, [allSelected, employees, searchText, selectedIds]);
-
-  const selectedEmployeeCount = allSelected
-    ? 0
-    : selectedIds.filter((id) => id !== 'all').length;
-
-  function openDropdown() {
-    if (disabled) {
-      return;
-    }
-
-    setSearchText('');
-    setOpen(true);
-  }
-
-  function handleAllEmployees() {
-    onChange?.(['all']);
-    setSearchText('');
-  }
-
-  function handleEmployeeToggle(employeeId) {
-    const currentIds = allSelected
-      ? []
-      : selectedIds.filter((id) => id !== 'all');
-
-    const nextIds = currentIds.includes(employeeId)
-      ? currentIds.filter((id) => id !== employeeId)
-      : [...currentIds, employeeId];
-
-    onChange?.(nextIds.length > 0 ? nextIds : ['all']);
-  }
-
-  return (
-    <div className="relative min-w-0 overflow-visible">
-      <label className="mb-1 block text-sm font-bold text-[#101828]">
-        Employee
-      </label>
-
-      <div className="relative overflow-visible">
-        <Search
-          size={17}
-          className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 text-[#667085]"
-        />
-
-        <input
-          ref={inputRef}
-          type="text"
-          value={open ? searchText : selectedLabel}
-          onChange={(event) => {
-            setSearchText(event.target.value);
-            setOpen(true);
-          }}
-          onFocus={openDropdown}
-          onClick={openDropdown}
-          disabled={disabled}
-          placeholder="Search US Visa employees..."
-          autoComplete="off"
-          className={`h-11 w-full ${FILTER_EDGE} border border-[#D0D5DD] bg-white pl-11 pr-11 text-sm font-bold text-[#344054] outline-none transition placeholder:font-semibold placeholder:text-[#98A2B3] disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400 hover:border-sibs-primary-1/30 hover:bg-[#F8FAFC] focus:border-sibs-primary-1 focus:ring-4 focus:ring-sibs-primary-1/10`}
-        />
-
-        <ChevronDown
-          size={18}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            if (disabled) {
-              return;
-            }
-
-            setSearchText('');
-            setOpen((currentOpen) => !currentOpen);
-          }}
-          className={`absolute right-4 top-1/2 -translate-y-1/2 cursor-pointer text-[#667085] transition-transform duration-300 ${
-            open ? 'rotate-180' : ''
-          }`}
-        />
-
-        <DashboardDropdownPortal
-          open={open && !disabled}
-          anchorRef={inputRef}
-          maxHeight={320}
-          minWidth={320}
-          onClose={() => {
-            setOpen(false);
-            setSearchText('');
-          }}
-        >
-          <button
-            type="button"
-            onClick={handleAllEmployees}
-            className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition ${
-              allSelected
-                ? 'bg-[#EAF2FB] font-bold text-sibs-primary-1'
-                : 'text-[#344054] hover:bg-[#F8FAFC]'
-            }`}
-          >
-            <span
-              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                allSelected
-                  ? 'border-sibs-primary-1 bg-sibs-primary-1 text-white'
-                  : 'border-[#D0D5DD] bg-white'
-              }`}
-            >
-              {allSelected ? <Check size={12} strokeWidth={3} /> : null}
-            </span>
-
-            <span className="truncate">All Employees</span>
-          </button>
-
-          {selectedEmployeeCount > 0 && !searchText ? (
-            <div className="sticky top-0 z-10 border-y border-[#D9E2EC] bg-[#F8FAFC] px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.06em] text-[#667085]">
-              Selected Employees ({selectedEmployeeCount})
-            </div>
-          ) : null}
-
-          {filteredEmployees.length > 0 ? (
-            filteredEmployees.map((employee, employeeIndex) => {
-              const checked =
-                !allSelected && selectedIds.includes(employee.id);
-
-              const previousEmployee = filteredEmployees[employeeIndex - 1];
-              const previousWasSelected = previousEmployee
-                ? !allSelected && selectedIds.includes(previousEmployee.id)
-                : false;
-              const startsUnselectedSection =
-                selectedEmployeeCount > 0 &&
-                !searchText &&
-                !checked &&
-                previousWasSelected;
-
-              return (
-                <React.Fragment key={employee.id}>
-                  {startsUnselectedSection ? (
-                    <div className="border-y border-[#D9E2EC] bg-[#F8FAFC] px-4 py-2 text-[11px] font-extrabold uppercase tracking-[0.06em] text-[#667085]">
-                      Other Employees
-                    </div>
-                  ) : null}
-
-                <button
-                  key={employee.id}
-                  type="button"
-                  onClick={() => handleEmployeeToggle(employee.id)}
-                  className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition ${
-                    checked
-                      ? 'bg-[#EAF2FB] font-bold text-sibs-primary-1'
-                      : 'text-[#344054] hover:bg-[#F8FAFC]'
-                  }`}
-                >
-                  <span
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                      checked
-                        ? 'border-sibs-primary-1 bg-sibs-primary-1 text-white'
-                        : 'border-[#D0D5DD] bg-white'
-                    }`}
-                  >
-                    {checked ? <Check size={12} strokeWidth={3} /> : null}
-                  </span>
-
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-bold">
-                      {employee.employee_name}
-                    </span>
-
-                    {employee.email || employee.sibsId ? (
-                      <span className="mt-0.5 block truncate text-xs font-semibold text-[#667085]">
-                        {employee.email || employee.sibsId}
-                      </span>
-                    ) : null}
-                  </span>
-                </button>
-                </React.Fragment>
-              );
-            })
-          ) : (
-            <div className="px-4 py-4 text-sm font-semibold text-[#667085]">
-              No employees found.
-            </div>
-          )}
-        </DashboardDropdownPortal>
-      </div>
-    </div>
-  );
-}
-
-
-function parseDashboardDate(value) {
-  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-
-  if (!match) {
-    return null;
-  }
-
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function formatDashboardDateValue(date) {
-  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
-    return '';
-  }
-
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-
-  return `${year}-${month}-${day}`;
-}
-
-function formatDashboardDateLabel(value) {
-  const date = parseDashboardDate(value);
-
-  if (!date) {
-    return 'Select date';
-  }
-
-  return date.toLocaleDateString('en-US', {
-    month: '2-digit',
-    day: '2-digit',
-    year: 'numeric',
-  });
-}
-
-function isSameCalendarDay(firstDate, secondDate) {
-  return (
-    firstDate instanceof Date &&
-    secondDate instanceof Date &&
-    firstDate.getFullYear() === secondDate.getFullYear() &&
-    firstDate.getMonth() === secondDate.getMonth() &&
-    firstDate.getDate() === secondDate.getDate()
-  );
-}
-
-function DashboardDatePicker({ value, onChange }) {
-  const buttonRef = useRef(null);
-  const [open, setOpen] = useState(false);
-  const selectedDate = useMemo(() => parseDashboardDate(value), [value]);
-  const [visibleMonth, setVisibleMonth] = useState(() => {
-    const baseDate = parseDashboardDate(value) || new Date();
-    return new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
-  });
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const baseDate = selectedDate || new Date();
-    setVisibleMonth(new Date(baseDate.getFullYear(), baseDate.getMonth(), 1));
-  }, [open, selectedDate]);
-
-  const calendarDays = useMemo(() => {
-    const year = visibleMonth.getFullYear();
-    const month = visibleMonth.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const gridStart = new Date(year, month, 1 - firstDay.getDay());
-
-    return Array.from({ length: 42 }, (_, index) => {
-      const date = new Date(gridStart);
-      date.setDate(gridStart.getDate() + index);
-      return date;
-    });
-  }, [visibleMonth]);
-
-  const today = new Date();
-
-  function selectDate(date) {
-    onChange?.(formatDashboardDateValue(date));
-    setOpen(false);
-  }
-
-  return (
-    <div className="relative min-w-0 overflow-visible">
-      <label className="mb-1 block text-sm font-bold text-[#101828]">
-        Date
-      </label>
-
-      <button
-        ref={buttonRef}
-        type="button"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => setOpen((currentOpen) => !currentOpen)}
-        className={`flex h-11 w-full items-center justify-between ${FILTER_EDGE} border border-[#D0D5DD] bg-white px-4 text-left text-sm font-bold text-[#0D4676] outline-none transition hover:border-[#0D4676]/30 hover:bg-[#F8FAFC] focus:border-[#0D4676] focus:ring-4 focus:ring-[#0D4676]/10 ${
-          open ? 'border-[#0D4676] ring-4 ring-[#0D4676]/10' : ''
-        }`}
-      >
-        <span className="flex min-w-0 items-center gap-2.5">
-          <CalendarDays size={17} className="shrink-0 text-[#0D4676]" />
-          <span className="truncate">{formatDashboardDateLabel(value)}</span>
-        </span>
-
-        <ChevronDown
-          size={17}
-          className={`ml-2 shrink-0 text-[#0D4676] transition-transform duration-200 ${
-            open ? 'rotate-180' : ''
-          }`}
-        />
-      </button>
-
-      <DashboardDropdownPortal
-        open={open}
-        anchorRef={buttonRef}
-        minWidth={310}
-        maxHeight={430}
-        onClose={() => setOpen(false)}
-      >
-        <div role="dialog" aria-label="Choose date" className="px-4 pb-2 pt-1 text-[#0D4676]">
-          <div className="flex items-center justify-between border-b border-[#E6ECF2] pb-3">
-            <button
-              type="button"
-              aria-label="Previous month"
-              onClick={() =>
-                setVisibleMonth(
-                  (currentMonth) =>
-                    new Date(
-                      currentMonth.getFullYear(),
-                      currentMonth.getMonth() - 1,
-                      1,
-                    ),
-                )
-              }
-              className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-[#EAF2FB]"
-            >
-              <ChevronLeft size={18} />
-            </button>
-
-            <p className="text-sm font-extrabold text-[#0D4676]">
-              {visibleMonth.toLocaleDateString('en-US', {
-                month: 'long',
-                year: 'numeric',
-              })}
-            </p>
-
-            <button
-              type="button"
-              aria-label="Next month"
-              onClick={() =>
-                setVisibleMonth(
-                  (currentMonth) =>
-                    new Date(
-                      currentMonth.getFullYear(),
-                      currentMonth.getMonth() + 1,
-                      1,
-                    ),
-                )
-              }
-              className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-[#EAF2FB]"
-            >
-              <ChevronRight size={18} />
-            </button>
-          </div>
-
-          <div className="mt-3 grid grid-cols-7 gap-y-1 text-center">
-            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((dayName) => (
-              <div
-                key={dayName}
-                className="flex h-8 items-center justify-center text-xs font-extrabold text-[#174A7C]"
-              >
-                {dayName}
-              </div>
-            ))}
-
-            {calendarDays.map((date) => {
-              const isCurrentMonth = date.getMonth() === visibleMonth.getMonth();
-              const isSelected = selectedDate && isSameCalendarDay(date, selectedDate);
-              const isToday = isSameCalendarDay(date, today);
-
-              return (
-                <button
-                  key={formatDashboardDateValue(date)}
-                  type="button"
-                  onClick={() => selectDate(date)}
-                  className={`mx-auto flex h-9 w-9 items-center justify-center rounded-full text-sm font-extrabold transition ${
-                    isSelected
-                      ? 'bg-[#E7F0FA] text-[#0D4676]'
-                      : isCurrentMonth
-                        ? 'text-[#0D4676] hover:bg-[#EAF2FB]'
-                        : 'text-[#98A7BA] hover:bg-[#F2F6FA]'
-                  } ${isToday && !isSelected ? 'ring-1 ring-[#B9CCE0]' : ''}`}
-                >
-                  {date.getDate()}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-3 flex items-center justify-between border-t border-[#E6ECF2] pt-3">
-            <button
-              type="button"
-              onClick={() => {
-                onChange?.('');
-                setOpen(false);
-              }}
-              className="rounded-lg px-3 py-2 text-xs font-extrabold text-[#0D4676] transition hover:bg-[#F2F6FA]"
-            >
-              Clear
-            </button>
-
-            <button
-              type="button"
-              onClick={() => selectDate(new Date())}
-              className="rounded-lg px-3 py-2 text-xs font-extrabold text-[#0D4676] transition hover:bg-[#F2F6FA]"
-            >
-              Today
-            </button>
-          </div>
-        </div>
-      </DashboardDropdownPortal>
-    </div>
-  );
-}
-
-
-function DashboardTimeDropdown({
-  label,
-  value,
-  options = [],
-  onChange,
-  placeholder = 'Search time...',
-  disabled = false,
-}) {
-  const inputRef = useRef(null);
-  const [open, setOpen] = useState(false);
-  const [searchText, setSearchText] = useState('');
-
-  const selectedOption = useMemo(
-    () => options.find((option) => Number(option.value) === Number(value)),
-    [options, value],
-  );
-
-  const visibleOptions = useMemo(() => {
-    const query = normalizeComparableText(searchText);
-
-    if (!query) {
-      return options;
-    }
-
-    return options.filter((option) =>
-      normalizeComparableText(option.label).includes(query),
-    );
-  }, [options, searchText]);
-
-  function openDropdown() {
-    if (disabled) return;
-    setSearchText('');
-    setOpen(true);
-  }
-
-  function selectOption(option) {
-    onChange?.(Number(option.value));
-    setSearchText('');
-    setOpen(false);
-  }
-
-  return (
-    <div className="relative min-w-0 overflow-visible">
-      {label ? (
-        <label className="mb-1 block text-sm font-bold text-[#101828]">
-          {label}
-        </label>
-      ) : null}
-
-      <div className="relative overflow-visible">
-        <input
-          ref={inputRef}
-          type="text"
-          value={open ? searchText : selectedOption?.label || ''}
-          onChange={(event) => {
-            setSearchText(event.target.value);
-            setOpen(true);
-          }}
-          onFocus={openDropdown}
-          onClick={openDropdown}
-          disabled={disabled}
-          placeholder={placeholder}
-          autoComplete="off"
-          className={`h-11 w-full ${FILTER_EDGE} border border-[#D0D5DD] bg-white px-4 pr-11 text-sm font-bold text-[#174A7C] outline-none transition placeholder:font-bold placeholder:text-[#174A7C] disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400 hover:border-[#0D4676]/30 hover:bg-[#F8FAFC] focus:border-[#0D4676] focus:ring-4 focus:ring-[#0D4676]/10`}
-        />
-
-        <ChevronDown
-          size={18}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            if (disabled) return;
-            setSearchText('');
-            setOpen((currentOpen) => !currentOpen);
-          }}
-          className={`absolute right-4 top-1/2 -translate-y-1/2 cursor-pointer text-[#0D4676] transition-transform duration-300 ${
-            open ? 'rotate-180' : ''
-          }`}
-        />
-
-        <DashboardDropdownPortal
-          open={open && !disabled}
-          anchorRef={inputRef}
-          maxHeight={255}
-          minWidth={190}
-          onClose={() => {
-            setOpen(false);
-            setSearchText('');
-          }}
-        >
-          {visibleOptions.length > 0 ? (
-            visibleOptions.map((option) => {
-              const selected = Number(option.value) === Number(value);
-
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => selectOption(option)}
-                  className={`block w-full px-4 py-3 text-left text-sm transition ${
-                    selected
-                      ? 'bg-[#E7F0FA] font-extrabold text-[#0D4676]'
-                      : 'font-medium text-[#475467] hover:bg-[#F8FAFC] hover:text-[#0D4676]'
-                  }`}
-                >
-                  <span className="block truncate">{option.label}</span>
-                </button>
-              );
-            })
-          ) : (
-            <div className="px-4 py-4 text-sm font-semibold text-[#667085]">
-              No time found.
-            </div>
-          )}
-        </DashboardDropdownPortal>
-      </div>
-    </div>
-  );
-}
-
 export default function DashboardPage() {
-  const {
-    userRole,
-    selectedSimUserEmail: currentUserEmail,
-  } = useRoster();
-
-  const initialKronosCacheRef = useRef(null);
-
-  if (initialKronosCacheRef.current === null) {
-    initialKronosCacheRef.current = readKronosEmployeeCache();
-  }
-
-  const kronosRequestSequence = useRef(0);
-  const [employees, setEmployees] = useState(
-    () => initialKronosCacheRef.current.employees
-  );
-  const [isKronosEmployeesLoading, setIsKronosEmployeesLoading] = useState(
-    () => initialKronosCacheRef.current.employees.length === 0
-  );
-  const [kronosEmployeesError, setKronosEmployeesError] = useState('');
+  const { filteredEmployeesForPerformanceAndDashboard: employees, userRole, selectedSimUserEmail: currentUserEmail } = useRoster();
   const [selectedEmpIds, setSelectedEmpIds] = useState(['all']);
   const [selectedDate, setSelectedDate] = useState('2026-07-07');
   const [isPending, startTransition] = useTransition();
@@ -1137,162 +59,46 @@ export default function DashboardPage() {
   const [toHour, setToHour] = useState(17);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const loadKronosEmployees = useCallback(
-    async ({ background = false, force = false } = {}) => {
-      const requestSequence = kronosRequestSequence.current + 1;
-      kronosRequestSequence.current = requestSequence;
-
-      const cachedResult = readKronosEmployeeCache();
-
-      if (
-        !force &&
-        cachedResult.isFresh &&
-        cachedResult.employees.length > 0
-      ) {
-        setEmployees(cachedResult.employees);
-        setIsKronosEmployeesLoading(false);
-        setKronosEmployeesError('');
-        return cachedResult.employees;
-      }
-
-      if (!background && cachedResult.employees.length === 0) {
-        setIsKronosEmployeesLoading(true);
-      }
-
-      setKronosEmployeesError('');
-
-      try {
-        const uniqueEmployees = await fetchUsVisaKronosEmployees();
-
-        if (kronosRequestSequence.current === requestSequence) {
-          setEmployees(uniqueEmployees);
-        }
-
-        return uniqueEmployees;
-      } catch (error) {
-        console.error(
-          '[US VISA KPI DASHBOARD] Unable to load Kronos employees:',
-          error
-        );
-
-        if (kronosRequestSequence.current === requestSequence) {
-          if (cachedResult.employees.length === 0) {
-            setEmployees([]);
-          }
-
-          setKronosEmployeesError(
-            error?.response?.data?.message ||
-              error?.message ||
-              'Unable to load US Visa employees from Kronos.'
-          );
-        }
-
-        throw error;
-      } finally {
-        if (kronosRequestSequence.current === requestSequence) {
-          setIsKronosEmployeesLoading(false);
-        }
-      }
-    },
-    []
-  );
-
-  useEffect(() => {
-    const cachedResult = readKronosEmployeeCache();
-
-    loadKronosEmployees({
-      background: cachedResult.employees.length > 0,
-      force: false,
-    }).catch(() => {
-      // The error message is already displayed in the employee filter.
-    });
-  }, [loadKronosEmployees]);
-
-  // If the user's role is Employee, restrict them to viewing only their own KPIs.
+  // If the user's role is Employee, restrict them to viewing only their own KPIs
   const activeUserEmployee = useMemo(() => {
-    if (userRole !== 'Employee') {
-      return null;
+    if (userRole === 'Employee') {
+      return employees.find(e => e.email.toLowerCase() === currentUserEmail.toLowerCase()) || null;
     }
-
-    const normalizedCurrentUserEmail = normalizeComparableText(currentUserEmail);
-
-    if (!normalizedCurrentUserEmail) {
-      return null;
-    }
-
-    return (
-      employees.find(
-        (employee) =>
-          normalizeComparableText(employee.email) === normalizedCurrentUserEmail
-      ) || null
-    );
+    return null;
   }, [userRole, employees, currentUserEmail]);
-
-  const activeEmployees = useMemo(() => {
-    return employees.filter(
-      (employee) =>
-        employee.status === 'Active' &&
-        employee.employment_status === 'Active'
-    );
-  }, [employees]);
-
   useEffect(() => {
     if (activeUserEmployee) {
       setSelectedEmpIds([activeUserEmployee.id]);
-      return;
-    }
-
-    setSelectedEmpIds((currentSelectedIds) => {
-      const validIds = currentSelectedIds.filter(
-        (id) =>
-          id === 'all' ||
-          activeEmployees.some((employee) => employee.id === id)
-      );
-
+    } else {
+      // Filter out any selected IDs that are no longer valid or active
+      const validIds = selectedEmpIds.filter(id => id === 'all' || employees.some(e => e.id === id && e.status === 'Active' && e.employment_status === 'Active'));
       if (validIds.length === 0) {
-        return ['all'];
+        setSelectedEmpIds(['all']);
+      } else if (JSON.stringify(validIds) !== JSON.stringify(selectedEmpIds)) {
+        setSelectedEmpIds(validIds);
       }
-
-      return validIds;
-    });
-  }, [activeUserEmployee, activeEmployees]);
+    }
+  }, [activeUserEmployee, employees]);
+  const activeEmployees = useMemo(() => {
+    return employees.filter(e => e.status === 'Active' && e.employment_status === 'Active');
+  }, [employees]);
 
   const selectedEmployeeName = useMemo(() => {
-    if (selectedEmpIds.includes('all') || selectedEmpIds.length === 0) {
-      return 'All Employees';
-    }
-
+    if (selectedEmpIds.includes('all') || selectedEmpIds.length === 0) return 'All Employees';
     if (selectedEmpIds.length === 1) {
-      return (
-        employees.find((employee) => employee.id === selectedEmpIds[0])
-          ?.employee_name || 'Select Employee'
-      );
+      return employees.find(e => e.id === selectedEmpIds[0])?.employee_name || 'Select Employee';
     }
-
     return `${selectedEmpIds.length} Employees Selected`;
   }, [selectedEmpIds, employees]);
 
-  // Build the complete KPI set only once, then reuse it for cards and insights.
-  const allAggregatedKPIs = useMemo(() => {
-    return aggregateKPIRecords(
-      activeEmployees,
-      selectedDate,
-      fromHour,
-      toHour
-    );
-  }, [activeEmployees, selectedDate, fromHour, toHour]);
-
+  // Fetch / aggregate core data based on filters
   const currentKPIs = useMemo(() => {
+    const aggregated = aggregateKPIRecords(employees, selectedDate, fromHour, toHour);
     if (selectedEmpIds.includes('all') || selectedEmpIds.length === 0) {
-      return allAggregatedKPIs;
+      return aggregated;
     }
-
-    const selectedIdSet = new Set(selectedEmpIds);
-
-    return allAggregatedKPIs.filter((kpi) =>
-      selectedIdSet.has(kpi.employeeId)
-    );
-  }, [allAggregatedKPIs, selectedEmpIds]);
+    return aggregated.filter(kpi => selectedEmpIds.includes(kpi.employeeId));
+  }, [employees, selectedDate, fromHour, toHour, selectedEmpIds]);
 
   // Aggregate values across filtered employees for the summary cards
   const summaryMetrics = useMemo(() => {
@@ -1316,17 +122,7 @@ export default function DashboardPage() {
         targetEmails: 0,
         actualEmails: 0,
         emailUtilization: 0,
-        actualEfficiency: 0,
-        trends: {
-          loggedTime: 0,
-          handledCalls: 0,
-          avgTalkTime: 0,
-          avgHoldTime: 0,
-          phoneOccupancy: 0,
-          emailCapacity: 0,
-          emailUtilization: 0,
-          efficiency: 0
-        }
+        actualEfficiency: 0
       };
     }
     let totalLogged = 0;
@@ -1392,15 +188,13 @@ export default function DashboardPage() {
 
   // Helper for rendering trend indicators
   const renderTrend = (value, inverse = false) => {
-    const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
-    const isPositive = safeValue >= 0;
+    const isPositive = value >= 0;
     const isGood = inverse ? !isPositive : isPositive;
     const color = isGood ? 'text-emerald-600' : 'text-rose-600';
     const Icon = isPositive ? ArrowUpRight : ArrowDownRight;
-
     return (
       <span className={`${color} font-mono flex items-center gap-0.5`}>
-        <Icon className="h-3 w-3" /> {Math.abs(safeValue)}%
+        <Icon className="h-3 w-3" /> {Math.abs(value)}%
       </span>
     );
   };
@@ -1496,9 +290,8 @@ export default function DashboardPage() {
 
   // Team Insights Generation
   const teamInsights = useMemo(() => {
-    if (allAggregatedKPIs.length === 0) return null;
-
-    const allAggregated = allAggregatedKPIs;
+    const allAggregated = aggregateKPIRecords(employees, selectedDate, fromHour, toHour);
+    if (allAggregated.length === 0) return null;
 
     // Filter by team if Employee belongs to a team or we are just summarizing
     let highestEff = {
@@ -1542,7 +335,7 @@ export default function DashboardPage() {
       lowestEfficiency: lowestEff === 100 ? 0 : lowestEff,
       teamAverage: Math.round(efficiencySum / allAggregated.length)
     };
-  }, [allAggregatedKPIs]);
+  }, [employees, selectedDate, fromHour, toHour]);
 
   // Dynamic sparkline data derived from hourlyChartData
   const sparklineDataMap = useMemo(() => {
@@ -1573,37 +366,11 @@ export default function DashboardPage() {
   );
   const triggerRefresh = async () => {
     setIsRefreshing(true);
-    window.dispatchEvent(
-      new CustomEvent('show-toast', {
-        detail: 'Refreshing US Visa employees from Kronos...',
-      })
-    );
-
-    try {
-      await loadKronosEmployees({ background: true, force: true });
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      window.dispatchEvent(
-        new CustomEvent('show-toast', {
-          detail: 'US Visa employee list and KPI aggregates updated successfully.',
-        })
-      );
-    } catch {
-      window.dispatchEvent(
-        new CustomEvent('show-toast', {
-          detail: 'Unable to refresh US Visa employees from Kronos.',
-        })
-      );
-    } finally {
-      setIsRefreshing(false);
-      setTimeout(
-        () =>
-          window.dispatchEvent(
-            new CustomEvent('show-toast', { detail: null })
-          ),
-        3500
-      );
-    }
+    window.dispatchEvent(new CustomEvent('show-toast', { detail: "Recalculating real-time KPI aggregates..." }));
+    await new Promise(r => setTimeout(r, 1200));
+    setIsRefreshing(false);
+    window.dispatchEvent(new CustomEvent('show-toast', { detail: "KPI aggregates updated successfully." }));
+    setTimeout(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: null })), 3000);
   };
   const handleExport = async (format) => {
     window.dispatchEvent(new CustomEvent('show-toast', { detail: `Preparing US Visa KPI report in ${format} format...` }));
@@ -1666,117 +433,87 @@ export default function DashboardPage() {
       </div>
 
       {/* Dashboard Filters Group */}
-      <div className="relative z-[100] mb-6 w-full overflow-visible rounded-xl border border-[#E4E7EC] bg-white p-4 shadow-sm">
-        <div className="grid w-full grid-cols-1 gap-3 md:grid-cols-[minmax(280px,1.35fr)_minmax(210px,0.8fr)_minmax(330px,1fr)] md:items-end">
-          <div className="relative z-[80] min-w-0 overflow-visible">
-            {isKronosEmployeesLoading ? (
-              <>
-                <label className="mb-1 block text-sm font-bold text-[#101828]">
-                  Employee
-                </label>
-
-                <div className={`flex h-11 items-center gap-2 ${FILTER_EDGE} border border-[#D0D5DD] bg-gray-50 px-4 text-sm font-semibold text-[#667085]`}>
-                  <RefreshCw className="h-4 w-4 animate-spin text-sibs-primary-1" />
-                  <span className="truncate">Loading US Visa employees...</span>
-                </div>
-              </>
-            ) : kronosEmployeesError ? (
-              <>
-                <label className="mb-1 block text-sm font-bold text-[#101828]">
-                  Employee
-                </label>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    loadKronosEmployees({ force: true }).catch(() => {})
-                  }
-                  className={`flex h-11 w-full items-center gap-2 ${FILTER_EDGE} border border-rose-200 bg-rose-50 px-4 text-left text-sm font-semibold text-rose-700 transition hover:bg-rose-100`}
-                  title={kronosEmployeesError}
-                >
-                  <RefreshCw className="h-4 w-4 shrink-0" />
-                  <span className="truncate">
-                    Failed to load employees. Click to retry.
-                  </span>
-                </button>
-              </>
-            ) : userRole === 'Employee' ? (
-              <>
-                <label className="mb-1 block text-sm font-bold text-[#101828]">
-                  Employee
-                </label>
-
-                <div className={`flex h-11 items-center gap-2 ${FILTER_EDGE} border border-[#D0D5DD] bg-gray-50 px-4 text-sm font-bold text-[#344054]`}>
-                  <User className="h-4 w-4 text-[#667085]" />
-                  <span className="truncate">{selectedEmployeeName}</span>
-                </div>
-              </>
-            ) : activeEmployees.length === 0 ? (
-              <>
-                <label className="mb-1 block text-sm font-bold text-[#101828]">
-                  Employee
-                </label>
-
-                <div className={`flex h-11 items-center gap-2 ${FILTER_EDGE} border border-[#D0D5DD] bg-gray-50 px-4 text-sm font-semibold text-[#667085]`}>
-                  <User className="h-4 w-4" />
-                  <span className="truncate">
-                    No active US Visa employees found
-                  </span>
-                </div>
-              </>
-            ) : (
-              <DashboardEmployeeDropdown
-                employees={activeEmployees}
-                selectedIds={selectedEmpIds}
-                onChange={(newIds) => {
-                  startTransition(() => setSelectedEmpIds(newIds));
-                }}
-              />
-            )}
-          </div>
-
-          <div className="relative z-[70] min-w-0 overflow-visible">
-            <DashboardDatePicker
-              value={selectedDate}
-              onChange={(nextDate) =>
-                startTransition(() => setSelectedDate(nextDate))
-              }
-            />
-          </div>
-
-          <div className="relative z-[60] min-w-0 overflow-visible">
-            <label className="mb-1 block text-sm font-bold text-[#101828]">
-              Time Range
-            </label>
-
-            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-              <DashboardTimeDropdown
-                value={fromHour}
-                options={HOURS.filter((hour) => hour.value < toHour)}
-                onChange={(nextHour) => {
-                  if (nextHour < toHour) {
-                    startTransition(() => setFromHour(nextHour));
-                  }
-                }}
-                placeholder="Search start time..."
-              />
-
-              <span className="text-sm font-bold text-[#98A2B3]">to</span>
-
-              <DashboardTimeDropdown
-                value={toHour}
-                options={HOURS.filter((hour) => hour.value > fromHour)}
-                onChange={(nextHour) => {
-                  if (nextHour > fromHour) {
-                    startTransition(() => setToHour(nextHour));
-                  }
-                }}
-                placeholder="Search end time..."
-              />
-            </div>
-          </div>
+<div className="flex flex-col md:flex-row items-end gap-4 bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm relative z-50 mb-6 w-full">
+  {/* Employee */}
+  <div className="flex flex-col gap-1.5 w-full md:flex-[1.35] shrink-0">
+    {userRole === "Employee" ? (
+      <>
+        <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
+          Employee
+        </label>
+        <div className="flex items-center gap-2 bg-slate-50 text-slate-700 text-xs px-3 py-2 rounded-lg border border-slate-200 cursor-not-allowed min-h-[38px]">
+          <User className="h-3.5 w-3.5 text-slate-400" />
+          <span className="font-semibold truncate">{selectedEmployeeName}</span>
         </div>
-      </div>
+      </>
+    ) : (
+      <EmployeeFilterDropdown
+        label="EMPLOYEE"
+        employees={activeEmployees}
+        selectedIds={selectedEmpIds}
+        onChange={(newIds) => {
+          startTransition(() => setSelectedEmpIds(newIds));
+        }}
+        placeholder="Search team members..."
+        selectionMode="immediate"
+      />
+    )}
+  </div>
+
+  {/* Date */}
+  <div className="flex flex-col gap-1.5 w-full md:flex-1 shrink-0">
+    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
+      Date
+    </label>
+    <input
+      type="date"
+      value={selectedDate}
+      onChange={(e) => startTransition(() => setSelectedDate(e.target.value))}
+      className="sibs-filter-input w-full bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200 text-center cursor-pointer"
+    />
+  </div>
+
+  {/* Time Range */}
+  <div className="flex flex-col gap-1.5 w-full md:flex-1 shrink-0">
+    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
+      Time Range
+    </label>
+
+    <div className="flex items-center gap-2">
+      <select
+        value={fromHour}
+        onChange={(e) => {
+          const val = parseInt(e.target.value);
+          if (val < toHour) startTransition(() => setFromHour(val));
+        }}
+        className="sibs-filter-input flex-1 bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200 cursor-pointer"
+      >
+        {HOURS.map((h) => (
+          <option key={`from-${h.value}`} value={h.value} disabled={h.value >= toHour}>
+            {h.label}
+          </option>
+        ))}
+      </select>
+
+      <span className="text-slate-400 font-medium text-sm">-</span>
+
+      <select
+        value={toHour}
+        onChange={(e) => {
+          const val = parseInt(e.target.value);
+          if (val > fromHour) startTransition(() => setToHour(val));
+        }}
+        className="sibs-filter-input flex-1 bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200 cursor-pointer"
+      >
+        {HOURS.map((h) => (
+          <option key={`to-${h.value}`} value={h.value} disabled={h.value <= fromHour}>
+            {h.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  </div>
+</div>
 
       {/* KPI Summary Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="kpi-cards-grid">
@@ -1799,7 +536,7 @@ export default function DashboardPage() {
               </p>
               <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
                 <span className="truncate">Target: {summaryMetrics.expectedHours}h</span>
-                {renderTrend(summaryMetrics.trends?.loggedTime ?? 0)}
+                {renderTrend(summaryMetrics.trends.loggedTime)}
               </div>
             </div>
           <div className="mt-4 h-12 w-full">
@@ -1836,7 +573,7 @@ export default function DashboardPage() {
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Target: {summaryMetrics.callsTarget}</span>
-              {renderTrend(summaryMetrics.trends?.handledCalls ?? 0)}
+              {renderTrend(summaryMetrics.trends.handledCalls)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -1873,7 +610,7 @@ export default function DashboardPage() {
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Target: {summaryMetrics.talkTarget}s</span>
-              {renderTrend(summaryMetrics.trends?.avgTalkTime ?? 0, true)}
+              {renderTrend(summaryMetrics.trends.avgTalkTime, true)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -1910,7 +647,7 @@ export default function DashboardPage() {
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Target: {summaryMetrics.holdTarget}s</span>
-              {renderTrend(summaryMetrics.trends?.avgHoldTime ?? 0, true)}
+              {renderTrend(summaryMetrics.trends.avgHoldTime, true)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -1947,7 +684,7 @@ export default function DashboardPage() {
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Avg Working Hours</span>
-              {renderTrend(summaryMetrics.trends?.phoneOccupancy ?? 0)}
+              {renderTrend(summaryMetrics.trends.phoneOccupancy)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -1984,7 +721,7 @@ export default function DashboardPage() {
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Daily Total Slots</span>
-              {renderTrend(summaryMetrics.trends?.emailCapacity ?? 0)}
+              {renderTrend(summaryMetrics.trends.emailCapacity)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -2021,7 +758,7 @@ export default function DashboardPage() {
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Target: {summaryMetrics.targetEmails}</span>
-              {renderTrend(summaryMetrics.trends?.emailUtilization ?? 0)}
+              {renderTrend(summaryMetrics.trends.emailUtilization)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -2058,7 +795,7 @@ export default function DashboardPage() {
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Target: 95%</span>
-              {renderTrend(summaryMetrics.trends?.efficiency ?? 0)}
+              {renderTrend(summaryMetrics.trends.efficiency)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
