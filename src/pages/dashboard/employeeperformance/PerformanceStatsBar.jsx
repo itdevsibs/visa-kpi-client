@@ -1,58 +1,83 @@
-import React from 'react';
-import { User, Award, Activity, Phone, Mail } from 'lucide-react';
+import React from "react";
+import { User, Award, Activity, Phone, Mail } from "lucide-react";
 
-export const PerformanceStatsBar = React.memo(({ statistics }) => {
+const statCards = [
+  {
+    key: "totalEmp",
+    label: "Total Employees",
+    icon: User,
+    iconClass: "bg-blue-50 text-blue-600",
+    suffix: "",
+  },
+  {
+    key: "avgEff",
+    label: "Avg Efficiency",
+    icon: Award,
+    iconClass: "bg-amber-50 text-amber-600",
+    suffix: "%",
+  },
+  {
+    key: "avgOccupancy",
+    label: "Phone Occupancy",
+    icon: Activity,
+    iconClass: "bg-sky-50 text-sky-600",
+    suffix: "%",
+  },
+  {
+    key: "totalCalls",
+    label: "Total Calls",
+    icon: Phone,
+    iconClass: "bg-emerald-50 text-emerald-600",
+    suffix: "",
+  },
+  {
+    key: "totalEmails",
+    label: "Total Emails",
+    icon: Mail,
+    iconClass: "bg-indigo-50 text-indigo-600",
+    suffix: "",
+  },
+];
+
+function StatCard({ card, value }) {
+  const Icon = card.icon;
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4" id="stats-bar">
-      <div className="sibs-stat-card bg-gradient-to-br from-slate-50 to-slate-100 flex items-center gap-3">
-        <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
-          <User className="h-4.5 w-4.5" />
+    <div className="sibs-page-card-in h-full">
+      <div className="sibs-stat-card group relative flex h-full items-center gap-3 overflow-hidden hover:-translate-y-0.5 hover:shadow-md">
+        <div className={`shrink-0 rounded-lg p-2.5 ${card.iconClass}`}>
+          <Icon className="h-4.5 w-4.5" />
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="sibs-section-label truncate">Total Employees</p>
-          <p className="sibs-metric-value text-2xl truncate mt-0.5">{statistics.totalEmp}</p>
-        </div>
-      </div>
 
-      <div className="sibs-stat-card bg-gradient-to-br from-slate-50 to-slate-100 flex items-center gap-3">
-        <div className="p-2.5 bg-amber-50 text-amber-600 rounded-lg shrink-0">
-          <Award className="h-4.5 w-4.5" />
-        </div>
         <div className="min-w-0 flex-1">
-          <p className="sibs-section-label truncate">Avg Efficiency</p>
-          <p className="sibs-metric-value text-2xl truncate mt-0.5">{statistics.avgEff}%</p>
+          <p className="sibs-section-label truncate">{card.label}</p>
+          <p className="sibs-metric-value mt-0.5 truncate text-2xl">
+            {value}
+            {card.suffix}
+          </p>
         </div>
       </div>
+    </div>
+  );
+}
 
-      <div className="sibs-stat-card bg-gradient-to-br from-slate-50 to-slate-100 flex items-center gap-3">
-        <div className="p-2.5 bg-sky-50 text-sky-600 rounded-lg shrink-0">
-          <Activity className="h-4.5 w-4.5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="sibs-section-label truncate">Phone Occupancy</p>
-          <p className="sibs-metric-value text-2xl truncate mt-0.5">{statistics.avgOccupancy}%</p>
-        </div>
-      </div>
+const MemoStatCard = React.memo(StatCard);
 
-      <div className="sibs-stat-card bg-gradient-to-br from-slate-50 to-slate-100 flex items-center gap-3">
-        <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-lg shrink-0">
-          <Phone className="h-4.5 w-4.5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="sibs-section-label truncate">Total Calls</p>
-          <p className="sibs-metric-value text-2xl truncate mt-0.5">{statistics.totalCalls}</p>
-        </div>
-      </div>
-
-      <div className="sibs-stat-card bg-gradient-to-br from-slate-50 to-slate-100 flex items-center gap-3">
-        <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
-          <Mail className="h-4.5 w-4.5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="sibs-section-label truncate">Total Emails</p>
-          <p className="sibs-metric-value text-2xl truncate mt-0.5">{statistics.totalEmails}</p>
-        </div>
-      </div>
+export const PerformanceStatsBar = React.memo(function PerformanceStatsBar({
+  statistics,
+}) {
+  return (
+    <div
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5"
+      id="stats-bar"
+    >
+      {statCards.map((card) => (
+        <MemoStatCard
+          key={card.key}
+          card={card}
+          value={statistics?.[card.key] ?? 0}
+        />
+      ))}
     </div>
   );
 });
