@@ -2454,7 +2454,7 @@ export default function DashboardPage() {
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Highest Occupancy</p>
               <p className="truncate text-xs font-bold text-slate-800 mt-1">Peak Occupancy</p>
               <p className="truncate text-lg font-bold font-mono text-indigo-600 mt-1">{teamInsights.highestOccupancy}%</p>
-            </div>
+            </div> 
 
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm min-w-0">
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Lowest Efficiency</p>

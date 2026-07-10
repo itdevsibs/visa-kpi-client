@@ -2103,7 +2103,7 @@ export default function PerformancePage() {
                         <span className="text-slate-500">Occupancy: <strong className="text-slate-900 font-bold">{hist.occupancy}%</strong></span>
                         <span className={`font-black tracking-tight ${hist.efficiency >= 95 ? 'text-emerald-600' : hist.efficiency >= 85 ? 'text-amber-500' : 'text-red-500'}`}>
                           {hist.efficiency}%
-                        </span>
+                        </span> 
                       </div>
                     </div>)}
                 </div>
