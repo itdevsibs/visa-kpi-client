@@ -127,13 +127,27 @@ const Header = () => {
 
       {/* Right: Logout */}
       <div className="w-64 flex justify-end shrink-0">
-        <button
-          onClick={handleLogout}
-          className="flex items-center gap-2 rounded-xl bg-red-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md transition-all duration-200 hover:bg-red-600 hover:shadow-lg hover:scale-[1.02] active:scale-95"
-        >
-          <LogOut className="w-4 h-4" />
-          <span className="hidden md:inline">Logout</span>
-        </button>
+       <button
+        onClick={handleLogout}
+        className="
+          flex items-center gap-2
+          rounded-xl
+          border border-slate-300
+          bg-white
+          px-4 py-2.5
+          text-sm font-semibold
+          text-slate-700
+          shadow-sm
+          transition-all duration-200
+          hover:bg-slate-100
+          hover:border-slate-400
+          hover:text-slate-900
+          active:scale-95
+        "
+      >
+        <LogOut className="h-4 w-4" />
+        <span className="hidden md:inline">Logout</span>
+      </button>
       </div>
     </header>
   );
