@@ -4,377 +4,260 @@ import { useRoster } from "../../services/context/RosterContext.jsx";
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { createPortal } from 'react-dom';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
+import { createPortal } from "react-dom";
 import { Button } from "../../components/ui/button.jsx";
 
-import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList } from 'recharts';
-import { Clock, Phone, ArrowUpRight, ArrowDownRight, RefreshCw, FileText, Download, Printer, User, Mail, Award, Percent, Zap, BarChart3, HelpCircle, ChevronDown, ChevronLeft, ChevronRight, Search, CalendarDays, Check } from 'lucide-react';
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  LabelList,
+} from "recharts";
+import {
+  Clock,
+  Phone,
+  ArrowUpRight,
+  ArrowDownRight,
+  RefreshCw,
+  FileText,
+  Download,
+  Printer,
+  User,
+  Mail,
+  Award,
+  Percent,
+  Zap,
+  BarChart3,
+  HelpCircle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  CalendarDays,
+  Check,
+  Database,
+  AlertCircle,
+} from "lucide-react";
 import { AnimatedNumber } from "../../components/ui/motion.jsx";
-import { aggregateKPIRecords, generateHourlyRecord } from '../../lib/utils/mockData.js';
 import LazyChartMount from "../../components/ui/LazyChartMount.jsx";
 import { apiGet } from "../../lib/axios/api.js";
-const HOURS = [{
-  value: 8,
-  label: '08:00 AM'
-}, {
-  value: 9,
-  label: '09:00 AM'
-}, {
-  value: 10,
-  label: '10:00 AM'
-}, {
-  value: 11,
-  label: '11:00 AM'
-}, {
-  value: 12,
-  label: '12:00 PM'
-}, {
-  value: 13,
-  label: '01:00 PM'
-}, {
-  value: 14,
-  label: '02:00 PM'
-}, {
-  value: 15,
-  label: '03:05 PM'
-},
-// Keep standard label
-{
-  value: 16,
-  label: '04:00 PM'
-}, {
-  value: 17,
-  label: '05:00 PM'
-}];
 
-// Normalize HOURS labels if needed
-HOURS[7].label = '03:00 PM'; // Fix any typo safely
+const HOURS = Array.from({ length: 24 }, (_, hour) => ({
+  value: hour,
+  label: new Date(2000, 0, 1, hour, 0, 0).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }),
+}));
 
-const KRONOS_ACCOUNT = 'US Visa';
-const KRONOS_PAGE_LIMIT = 500;
-const KRONOS_FETCH_CONCURRENCY = 6;
-const KRONOS_CACHE_TTL_MS = 10 * 60 * 1000;
-const KRONOS_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const KRONOS_CACHE_KEY = 'sibs-us-visa-kronos-employees-v3';
+// End values are exclusive boundaries. Value 24 means the final second
+// of the selected day, displayed as 11:59:59 PM.
+const END_TIMES = [
+  ...Array.from({ length: 23 }, (_, index) => {
+    const hour = index + 1;
 
-let kronosEmployeesMemoryCache = null;
-let kronosEmployeesMemoryCacheSavedAt = 0;
-let kronosEmployeesInFlightPromise = null;
+    return {
+      value: hour,
+      label: new Date(2000, 0, 1, hour, 0, 0).toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      }),
+    };
+  }),
+  { value: 24, label: "11:59:59 PM" },
+];
 
 function cleanText(value) {
-  return String(value ?? '').trim();
+  return String(value ?? "").trim();
 }
 
 function normalizeComparableText(value) {
-  return cleanText(value).toLowerCase().replace(/\s+/g, ' ');
+  return cleanText(value).toLowerCase().replace(/\s+/g, " ");
 }
 
-function getKronosResponseRows(response) {
-  const candidates = [
-    response?.data,
-    response?.data?.data,
-    response?.data?.employees,
-    response?.employees,
-    response?.rows,
-  ];
-
-  return candidates.find(Array.isArray) || [];
+function getApiPayload(response) {
+  return response?.data?.data ?? response?.data ?? response ?? null;
 }
 
-function getKronosPagination(response) {
-  return response?.pagination || response?.data?.pagination || {};
+function getApiRows(response) {
+  const payload = getApiPayload(response);
+
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (Array.isArray(payload?.rows)) {
+    return payload.rows;
+  }
+
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+
+  return [];
 }
 
-function normalizeKronosEmployee(employee = {}, rowIndex = 0) {
-  const sibsId = cleanText(
-    employee.sibsId ||
-      employee.sibs_id ||
-      employee.employeeId ||
+function normalizeEmployee(employee = {}) {
+  const employeeUid = cleanText(
+    employee.employeeUid ||
+      employee.employee_uid ||
+      employee.id ||
+      employee.employeeId,
+  );
+
+  const employeeName = cleanText(
+    employee.employeeName || employee.employee_name || employee.name,
+  );
+
+  const employeeCode = cleanText(
+    employee.employeeId ||
       employee.employee_id ||
-      employee.id
-  );
-
-  const fullName = cleanText(
-    employee.fullName ||
-      employee.full_name ||
-      employee.employeeName ||
-      employee.employee_name ||
-      employee.name
-  );
-
-  const email = cleanText(
-    employee.email || employee.emailAddress || employee.email_address
-  );
-
-  const account = cleanText(
-    employee.account || employee.accountName || employee.account_name
-  );
-
-  const rawStatus = cleanText(
-    employee.status ||
-      employee.employmentStatus ||
-      employee.employment_status
-  );
-
-  const normalizedStatus = normalizeComparableText(rawStatus);
-  const inactiveStatuses = new Set([
-    'inactive',
-    'resigned',
-    'terminated',
-    'separated',
-    'awol',
-  ]);
-  const isActive = !inactiveStatuses.has(normalizedStatus);
-
-  const id = cleanText(
-    employee.id ||
-      employee.employeeId ||
-      employee.employee_id ||
-      sibsId ||
-      email ||
-      `kronos-${rowIndex}`
+      employee.employeeNumber ||
+      employee.employee_number,
   );
 
   return {
     ...employee,
-    id,
-    employeeId: id,
-    employee_id: id,
-    sibsId,
-    sibs_id: sibsId,
-    fullName: fullName || sibsId || email || 'Unnamed Employee',
-    employee_name: fullName || sibsId || email || 'Unnamed Employee',
-    name: fullName || sibsId || email || 'Unnamed Employee',
-    email,
-    account,
-    kronos_status: rawStatus,
-    status: isActive ? 'Active' : rawStatus || 'Inactive',
-    employment_status: isActive ? 'Active' : rawStatus || 'Inactive',
+    id: employeeUid,
+    employeeUid,
+    employeeId: employeeCode,
+    employee_id: employeeCode,
+    employeeNumber: cleanText(
+      employee.employeeNumber || employee.employee_number,
+    ),
+    sibsId: employeeCode,
+    sibs_id: employeeCode,
+    employee_name: employeeName,
+    fullName: employeeName,
+    name: employeeName,
+    email: cleanText(employee.email),
+    position: cleanText(employee.position),
+    department: cleanText(employee.department),
+    team: cleanText(employee.team),
+    supervisor: cleanText(employee.supervisor),
+    account: cleanText(employee.accountName || employee.account_name),
+    status: cleanText(employee.status) || "Active",
+    employment_status:
+      cleanText(employee.employmentStatus || employee.employment_status) ||
+      "Active",
   };
 }
 
-function isUsVisaEmployee(employee = {}) {
-  const account =
-    employee.account || employee.accountName || employee.account_name;
-
-  return (
-    normalizeComparableText(account) ===
-    normalizeComparableText(KRONOS_ACCOUNT)
-  );
-}
-
-function sortAndDeduplicateKronosEmployees(rows = []) {
-  const normalizedEmployees = rows
-    .filter(isUsVisaEmployee)
-    .map(normalizeKronosEmployee)
-    .filter((employee) => employee.id && employee.employee_name);
-
-  return Array.from(
-    new Map(
-      normalizedEmployees.map((employee) => [employee.id, employee])
-    ).values()
-  ).sort((firstEmployee, secondEmployee) =>
-    firstEmployee.employee_name.localeCompare(
-      secondEmployee.employee_name,
-      undefined,
-      { sensitivity: 'base' }
-    )
-  );
-}
-
-function readKronosEmployeeCache() {
-  const now = Date.now();
-
-  if (
-    Array.isArray(kronosEmployeesMemoryCache) &&
-    kronosEmployeesMemoryCache.length > 0 &&
-    now - kronosEmployeesMemoryCacheSavedAt <= KRONOS_CACHE_MAX_AGE_MS
-  ) {
-    return {
-      employees: kronosEmployeesMemoryCache,
-      savedAt: kronosEmployeesMemoryCacheSavedAt,
-      isFresh:
-        now - kronosEmployeesMemoryCacheSavedAt <= KRONOS_CACHE_TTL_MS,
-    };
-  }
-
-  if (typeof window === 'undefined') {
-    return { employees: [], savedAt: 0, isFresh: false };
-  }
-
-  try {
-    const cachedValue = window.sessionStorage.getItem(KRONOS_CACHE_KEY);
-
-    if (!cachedValue) {
-      return { employees: [], savedAt: 0, isFresh: false };
-    }
-
-    const parsedCache = JSON.parse(cachedValue);
-    const savedAt = Number(parsedCache?.savedAt || 0);
-    const cachedEmployees = Array.isArray(parsedCache?.employees)
-      ? parsedCache.employees
-      : [];
-
-    if (
-      cachedEmployees.length === 0 ||
-      !savedAt ||
-      now - savedAt > KRONOS_CACHE_MAX_AGE_MS
-    ) {
-      window.sessionStorage.removeItem(KRONOS_CACHE_KEY);
-      return { employees: [], savedAt: 0, isFresh: false };
-    }
-
-    kronosEmployeesMemoryCache = cachedEmployees;
-    kronosEmployeesMemoryCacheSavedAt = savedAt;
-
-    return {
-      employees: cachedEmployees,
-      savedAt,
-      isFresh: now - savedAt <= KRONOS_CACHE_TTL_MS,
-    };
-  } catch (error) {
-    console.warn(
-      '[US VISA KPI DASHBOARD] Unable to read the Kronos employee cache:',
-      error
-    );
-
-    return { employees: [], savedAt: 0, isFresh: false };
-  }
-}
-
-function writeKronosEmployeeCache(employees = []) {
-  if (!Array.isArray(employees) || employees.length === 0) {
-    return;
-  }
-
-  const savedAt = Date.now();
-
-  kronosEmployeesMemoryCache = employees;
-  kronosEmployeesMemoryCacheSavedAt = savedAt;
-
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  try {
-    window.sessionStorage.setItem(
-      KRONOS_CACHE_KEY,
-      JSON.stringify({ savedAt, employees })
-    );
-  } catch (error) {
-    console.warn(
-      '[US VISA KPI DASHBOARD] Unable to save the Kronos employee cache:',
-      error
-    );
-  }
-}
-
-function getTotalKronosPages(pagination = {}, firstPageRows = []) {
-  const explicitTotalPages = Number(
-    pagination?.totalPages ||
-      pagination?.total_pages ||
-      pagination?.lastPage ||
-      pagination?.last_page ||
-      0
+function normalizeRecord(record = {}) {
+  const employeeId = cleanText(
+    record.employeeId || record.employee_uid || record.employeeUid,
   );
 
-  if (Number.isFinite(explicitTotalPages) && explicitTotalPages > 0) {
-    return Math.max(1, Math.ceil(explicitTotalPages));
-  }
-
-  const totalRows = Number(
-    pagination?.total ||
-      pagination?.totalRows ||
-      pagination?.total_rows ||
-      pagination?.count ||
-      0
-  );
-
-  const pageSize = Number(
-    pagination?.limit ||
-      pagination?.pageSize ||
-      pagination?.page_size ||
-      KRONOS_PAGE_LIMIT
-  );
-
-  if (
-    Number.isFinite(totalRows) &&
-    totalRows > 0 &&
-    Number.isFinite(pageSize) &&
-    pageSize > 0
-  ) {
-    return Math.max(1, Math.ceil(totalRows / pageSize));
-  }
-
-  return firstPageRows.length >= KRONOS_PAGE_LIMIT ? 2 : 1;
+  return {
+    ...record,
+    employeeId,
+    employeeName: cleanText(
+      record.employeeName || record.employee_name || record.agent_name,
+    ),
+    employeeCode: cleanText(
+      record.employeeCode ||
+        record.employee_code ||
+        record.employeeNumber ||
+        record.employee_number,
+    ),
+    email: cleanText(record.email),
+    position: cleanText(record.position),
+    team: cleanText(record.team),
+    productionDate: cleanText(
+      record.productionDate || record.production_date,
+    ),
+    hour:
+      record.hour === null || record.hour === undefined
+        ? undefined
+        : Number(record.hour),
+    expectedSeconds: Number(record.expectedSeconds || 0),
+    loggedSeconds: Number(record.loggedSeconds || 0),
+    handledCalls: Number(record.handledCalls || 0),
+    avgTalkTime: Number(record.avgTalkTime || 0),
+    avgHoldTime: Number(record.avgHoldTime || 0),
+    availableSeconds: Number(record.availableSeconds || 0),
+    phoneOccupancy: Number(record.phoneOccupancy || 0),
+    availableEmailCapacity: Number(record.availableEmailCapacity || 0),
+    targetEmails: Number(record.targetEmails || 0),
+    actualEmails: Number(record.actualEmails || 0),
+    emailUtilization: Number(record.emailUtilization || 0),
+    efficiency: Number(record.efficiency || 0),
+  };
 }
 
-async function requestKronosEmployeePage(page) {
-  return apiGet('/users/kronos-employees', {
-    params: {
-      page,
-      limit: KRONOS_PAGE_LIMIT,
-      search: '',
-      department: 'All',
-      account: KRONOS_ACCOUNT,
-      includeDepartments: 0,
-      includeAccounts: 0,
-    },
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, Number(value || 0)));
+}
+
+function formatMetric(value, maximumFractionDigits = 2) {
+  const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
+
+  return safeValue.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
   });
 }
 
-async function fetchUsVisaKronosEmployees() {
-  if (kronosEmployeesInFlightPromise) {
-    return kronosEmployeesInFlightPromise;
-  }
+function getDefaultDateValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
 
-  kronosEmployeesInFlightPromise = (async () => {
-    const firstResponse = await requestKronosEmployeePage(1);
-    const firstRows = getKronosResponseRows(firstResponse);
-    const firstPagination = getKronosPagination(firstResponse);
-    const totalPages = getTotalKronosPages(firstPagination, firstRows);
-    const allRows = [...firstRows];
-
-    if (totalPages > 1) {
-      const remainingPages = Array.from(
-        { length: totalPages - 1 },
-        (_, index) => index + 2
-      );
-
-      for (
-        let index = 0;
-        index < remainingPages.length;
-        index += KRONOS_FETCH_CONCURRENCY
-      ) {
-        const pageBatch = remainingPages.slice(
-          index,
-          index + KRONOS_FETCH_CONCURRENCY
-        );
-
-        const pageResponses = await Promise.all(
-          pageBatch.map(requestKronosEmployeePage)
-        );
-
-        pageResponses.forEach((response) => {
-          allRows.push(...getKronosResponseRows(response));
-        });
-      }
-    }
-
-    const uniqueEmployees = sortAndDeduplicateKronosEmployees(allRows);
-    writeKronosEmployeeCache(uniqueEmployees);
-
-    return uniqueEmployees;
-  })();
-
-  try {
-    return await kronosEmployeesInFlightPromise;
-  } finally {
-    kronosEmployeesInFlightPromise = null;
-  }
+  return `${year}-${month}-${day}`;
 }
 
+function calculateRealTrend(data, key) {
+  if (!Array.isArray(data) || data.length < 2) {
+    return 0;
+  }
+
+  const splitIndex = Math.max(1, Math.floor(data.length / 2));
+  const previousRows = data.slice(0, splitIndex);
+  const currentRows = data.slice(splitIndex);
+
+  const average = (rows) => {
+    if (rows.length === 0) {
+      return 0;
+    }
+
+    return (
+      rows.reduce((sum, row) => sum + Number(row?.[key] || 0), 0) /
+      rows.length
+    );
+  };
+
+  const previousAverage = average(previousRows);
+  const currentAverage = average(currentRows);
+
+  if (previousAverage === 0) {
+    return currentAverage === 0 ? 0 : 100;
+  }
+
+  return Math.round(((currentAverage - previousAverage) / previousAverage) * 100);
+}
 
 const FILTER_EDGE = 'rounded-[10px]';
 
@@ -1116,101 +999,67 @@ export default function DashboardPage() {
     selectedSimUserEmail: currentUserEmail,
   } = useRoster();
 
-  const initialKronosCacheRef = useRef(null);
-
-  if (initialKronosCacheRef.current === null) {
-    initialKronosCacheRef.current = readKronosEmployeeCache();
-  }
-
-  const kronosRequestSequence = useRef(0);
-  const [employees, setEmployees] = useState(
-    () => initialKronosCacheRef.current.employees
-  );
-  const [isKronosEmployeesLoading, setIsKronosEmployeesLoading] = useState(
-    () => initialKronosCacheRef.current.employees.length === 0
-  );
-  const [kronosEmployeesError, setKronosEmployeesError] = useState('');
-  const [selectedEmpIds, setSelectedEmpIds] = useState(['all']);
-  const [selectedDate, setSelectedDate] = useState('2026-07-07');
-  const [isPending, startTransition] = useTransition();
-  const [fromHour, setFromHour] = useState(8);
-  const [toHour, setToHour] = useState(17);
+  const [employees, setEmployees] = useState([]);
+  const [dailyRecords, setDailyRecords] = useState([]);
+  const [hourlyRecords, setHourlyRecords] = useState([]);
+  const [selectedEmpIds, setSelectedEmpIds] = useState(["all"]);
+  const [selectedDate, setSelectedDate] = useState("");
+  const [fromHour, setFromHour] = useState(0);
+  const [toHour, setToHour] = useState(24);
+  const dashboardRequestSequence = useRef(0);
+  const [isBootstrapLoading, setIsBootstrapLoading] = useState(true);
+  const [isDashboardDataLoading, setIsDashboardDataLoading] = useState(false);
+  const [loadedDashboardRequestKey, setLoadedDashboardRequestKey] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [bootstrapError, setBootstrapError] = useState("");
+  const [dashboardDataError, setDashboardDataError] = useState("");
+  const [isPending, startTransition] = useTransition();
 
-  const loadKronosEmployees = useCallback(
-    async ({ background = false, force = false } = {}) => {
-      const requestSequence = kronosRequestSequence.current + 1;
-      kronosRequestSequence.current = requestSequence;
+  const loadDashboardBootstrap = useCallback(async () => {
+    dashboardRequestSequence.current += 1;
+    setIsBootstrapLoading(true);
+    setIsDashboardDataLoading(false);
+    setLoadedDashboardRequestKey("");
+    setBootstrapError("");
+    setDashboardDataError("");
 
-      const cachedResult = readKronosEmployeeCache();
+    try {
+      const response = await apiGet("/performance/bootstrap");
+      const payload = getApiPayload(response) || {};
+      const matchedEmployees = Array.isArray(payload.employees)
+        ? payload.employees
+            .map(normalizeEmployee)
+            .filter((employee) => employee.id && employee.employee_name)
+        : [];
 
-      if (
-        !force &&
-        cachedResult.isFresh &&
-        cachedResult.employees.length > 0
-      ) {
-        setEmployees(cachedResult.employees);
-        setIsKronosEmployeesLoading(false);
-        setKronosEmployeesError('');
-        return cachedResult.employees;
-      }
+      setEmployees(matchedEmployees);
+      setSelectedDate((currentDate) =>
+        currentDate || cleanText(payload.latestProductionDate) || getDefaultDateValue(),
+      );
 
-      if (!background && cachedResult.employees.length === 0) {
-        setIsKronosEmployeesLoading(true);
-      }
-
-      setKronosEmployeesError('');
-
-      try {
-        const uniqueEmployees = await fetchUsVisaKronosEmployees();
-
-        if (kronosRequestSequence.current === requestSequence) {
-          setEmployees(uniqueEmployees);
-        }
-
-        return uniqueEmployees;
-      } catch (error) {
-        console.error(
-          '[US VISA KPI DASHBOARD] Unable to load Kronos employees:',
-          error
-        );
-
-        if (kronosRequestSequence.current === requestSequence) {
-          if (cachedResult.employees.length === 0) {
-            setEmployees([]);
-          }
-
-          setKronosEmployeesError(
-            error?.response?.data?.message ||
-              error?.message ||
-              'Unable to load US Visa employees from Kronos.'
-          );
-        }
-
-        throw error;
-      } finally {
-        if (kronosRequestSequence.current === requestSequence) {
-          setIsKronosEmployeesLoading(false);
-        }
-      }
-    },
-    []
-  );
+      return matchedEmployees;
+    } catch (error) {
+      console.error("[DASHBOARD BOOTSTRAP ERROR]", error);
+      setEmployees([]);
+      setBootstrapError(
+        error?.response?.data?.message ||
+          error?.message ||
+          "Unable to load matched US Visa employees.",
+      );
+      throw error;
+    } finally {
+      setIsBootstrapLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const cachedResult = readKronosEmployeeCache();
+    loadDashboardBootstrap().catch(() => {});
+  }, [loadDashboardBootstrap]);
 
-    loadKronosEmployees({
-      background: cachedResult.employees.length > 0,
-      force: false,
-    }).catch(() => {
-      // The error message is already displayed in the employee filter.
-    });
-  }, [loadKronosEmployees]);
+  const activeEmployees = useMemo(() => employees, [employees]);
 
-  // If the user's role is Employee, restrict them to viewing only their own KPIs.
   const activeUserEmployee = useMemo(() => {
-    if (userRole !== 'Employee') {
+    if (userRole !== "Employee") {
       return null;
     }
 
@@ -1223,18 +1072,10 @@ export default function DashboardPage() {
     return (
       employees.find(
         (employee) =>
-          normalizeComparableText(employee.email) === normalizedCurrentUserEmail
+          normalizeComparableText(employee.email) === normalizedCurrentUserEmail,
       ) || null
     );
-  }, [userRole, employees, currentUserEmail]);
-
-  const activeEmployees = useMemo(() => {
-    return employees.filter(
-      (employee) =>
-        employee.status === 'Active' &&
-        employee.employment_status === 'Active'
-    );
-  }, [employees]);
+  }, [currentUserEmail, employees, userRole]);
 
   useEffect(() => {
     if (activeUserEmployee) {
@@ -1244,74 +1085,278 @@ export default function DashboardPage() {
 
     setSelectedEmpIds((currentSelectedIds) => {
       const validIds = currentSelectedIds.filter(
-        (id) =>
-          id === 'all' ||
-          activeEmployees.some((employee) => employee.id === id)
+        (id) => id === "all" || employees.some((employee) => employee.id === id),
       );
 
-      if (validIds.length === 0) {
-        return ['all'];
-      }
-
-      return validIds;
+      return validIds.length > 0 ? validIds : ["all"];
     });
-  }, [activeUserEmployee, activeEmployees]);
+  }, [activeUserEmployee, employees]);
 
   const selectedEmployeeName = useMemo(() => {
-    if (selectedEmpIds.includes('all') || selectedEmpIds.length === 0) {
-      return 'All Employees';
+    if (selectedEmpIds.includes("all") || selectedEmpIds.length === 0) {
+      return "All Matched Employees";
     }
 
     if (selectedEmpIds.length === 1) {
       return (
         employees.find((employee) => employee.id === selectedEmpIds[0])
-          ?.employee_name || 'Select Employee'
+          ?.employee_name || "Select Employee"
       );
     }
 
     return `${selectedEmpIds.length} Employees Selected`;
-  }, [selectedEmpIds, employees]);
+  }, [employees, selectedEmpIds]);
 
-  // Build the complete KPI set only once, then reuse it for cards and insights.
-  const allAggregatedKPIs = useMemo(() => {
-    return aggregateKPIRecords(
-      activeEmployees,
-      selectedDate,
-      fromHour,
-      toHour
-    );
-  }, [activeEmployees, selectedDate, fromHour, toHour]);
-
-  const currentKPIs = useMemo(() => {
-    if (selectedEmpIds.includes('all') || selectedEmpIds.length === 0) {
-      return allAggregatedKPIs;
+  const selectedEmployeeUids = useMemo(() => {
+    if (selectedEmpIds.includes("all") || selectedEmpIds.length === 0) {
+      return "";
     }
 
-    const selectedIdSet = new Set(selectedEmpIds);
+    return selectedEmpIds.join(",");
+  }, [selectedEmpIds]);
 
-    return allAggregatedKPIs.filter((kpi) =>
-      selectedIdSet.has(kpi.employeeId)
-    );
-  }, [allAggregatedKPIs, selectedEmpIds]);
+  const dashboardRequestKey = useMemo(() => {
+    if (!selectedDate) {
+      return "";
+    }
 
-  // Aggregate values across filtered employees for the summary cards
+    return [
+      selectedDate,
+      Number(fromHour),
+      Number(toHour),
+      selectedEmployeeUids || "all",
+    ].join("|");
+  }, [fromHour, selectedDate, selectedEmployeeUids, toHour]);
+
+  const loadDashboardData = useCallback(async () => {
+    if (isBootstrapLoading || !selectedDate || !dashboardRequestKey) {
+      setDailyRecords([]);
+      setHourlyRecords([]);
+      setLoadedDashboardRequestKey("");
+      setIsDashboardDataLoading(false);
+      return null;
+    }
+
+    const requestSequence = dashboardRequestSequence.current + 1;
+    dashboardRequestSequence.current = requestSequence;
+    const requestedKey = dashboardRequestKey;
+
+    setIsDashboardDataLoading(true);
+    setLoadedDashboardRequestKey("");
+    setDashboardDataError("");
+
+    const requestParams = {
+      date: selectedDate,
+      fromHour,
+      toHourExclusive: toHour,
+      employeeUids: selectedEmployeeUids,
+    };
+
+    try {
+      const [dailyResponse, hourlyResponse] = await Promise.all([
+        apiGet("/performance/records", {
+          params: {
+            ...requestParams,
+            interval: "Daily",
+          },
+        }),
+        apiGet("/performance/records", {
+          params: {
+            ...requestParams,
+            interval: "Hourly",
+          },
+        }),
+      ]);
+
+      if (dashboardRequestSequence.current !== requestSequence) {
+        return null;
+      }
+
+      const nextDailyRecords = getApiRows(dailyResponse).map(normalizeRecord);
+      const nextHourlyRecords = getApiRows(hourlyResponse).map(normalizeRecord);
+
+      setDailyRecords(nextDailyRecords);
+      setHourlyRecords(nextHourlyRecords);
+      setLoadedDashboardRequestKey(requestedKey);
+
+      return {
+        dailyRecords: nextDailyRecords,
+        hourlyRecords: nextHourlyRecords,
+      };
+    } catch (error) {
+      if (dashboardRequestSequence.current !== requestSequence) {
+        return null;
+      }
+
+      console.error("[DASHBOARD RECORDS ERROR]", error);
+      setDailyRecords([]);
+      setHourlyRecords([]);
+      setLoadedDashboardRequestKey("");
+      setDashboardDataError(
+        error?.response?.data?.message ||
+          error?.message ||
+          "Unable to load matched KPI dashboard records.",
+      );
+
+      throw error;
+    } finally {
+      if (dashboardRequestSequence.current === requestSequence) {
+        setIsDashboardDataLoading(false);
+      }
+    }
+  }, [
+    dashboardRequestKey,
+    fromHour,
+    isBootstrapLoading,
+    selectedDate,
+    selectedEmployeeUids,
+    toHour,
+  ]);
+
+  useEffect(() => {
+    if (isBootstrapLoading || !selectedDate || !dashboardRequestKey) {
+      return;
+    }
+
+    loadDashboardData().catch(() => {});
+  }, [
+    dashboardRequestKey,
+    isBootstrapLoading,
+    loadDashboardData,
+    selectedDate,
+  ]);
+
+  const hasLoadedDashboardData =
+    Boolean(dashboardRequestKey) &&
+    loadedDashboardRequestKey === dashboardRequestKey;
+
+  const showDashboardLoading =
+    !isBootstrapLoading &&
+    Boolean(selectedDate) &&
+    !dashboardDataError &&
+    (isDashboardDataLoading || isPending || !hasLoadedDashboardData);
+
+  const showNoDashboardRecords =
+    hasLoadedDashboardData &&
+    !isDashboardDataLoading &&
+    !isPending &&
+    !dashboardDataError &&
+    dailyRecords.length === 0;
+
+  const showDashboardContent =
+    hasLoadedDashboardData &&
+    !isDashboardDataLoading &&
+    !dashboardDataError &&
+    dailyRecords.length > 0;
+
+  const hourlyChartData = useMemo(() => {
+    const recordsByHour = new Map();
+
+    hourlyRecords.forEach((record) => {
+      const hour = Number(record.hour);
+
+      if (!Number.isInteger(hour) || hour < fromHour || hour >= toHour) {
+        return;
+      }
+
+      if (!recordsByHour.has(hour)) {
+        recordsByHour.set(hour, []);
+      }
+
+      recordsByHour.get(hour).push(record);
+    });
+
+    const data = [];
+
+    for (let hour = fromHour; hour < toHour; hour += 1) {
+      const rows = recordsByHour.get(hour) || [];
+      let expectedSeconds = 0;
+      let loggedSeconds = 0;
+      let availableSeconds = 0;
+      let handledCalls = 0;
+      let weightedTalkSeconds = 0;
+      let weightedHoldSeconds = 0;
+      let weightedOccupancy = 0;
+      let weightedEfficiency = 0;
+      let actualEmails = 0;
+      let targetEmails = 0;
+      let emailCapacity = 0;
+
+      rows.forEach((record) => {
+        expectedSeconds += record.expectedSeconds;
+        loggedSeconds += record.loggedSeconds;
+        availableSeconds += record.availableSeconds;
+        handledCalls += record.handledCalls;
+        weightedTalkSeconds += record.avgTalkTime * record.handledCalls;
+        weightedHoldSeconds += record.avgHoldTime * record.handledCalls;
+        weightedOccupancy += record.phoneOccupancy * record.loggedSeconds;
+        weightedEfficiency += record.efficiency * record.expectedSeconds;
+        actualEmails += record.actualEmails;
+        targetEmails += record.targetEmails;
+        emailCapacity += record.availableEmailCapacity;
+      });
+
+      const avgTalkTime =
+        handledCalls > 0 ? Math.round(weightedTalkSeconds / handledCalls) : 0;
+      const avgHoldTime =
+        handledCalls > 0 ? Math.round(weightedHoldSeconds / handledCalls) : 0;
+      const phoneOccupancy =
+        loggedSeconds > 0
+          ? Math.round((weightedOccupancy / loggedSeconds) * 100) / 100
+          : 0;
+      const availablePercent =
+        loggedSeconds > 0
+          ? clamp((availableSeconds / loggedSeconds) * 100, 0, 100)
+          : 0;
+      const efficiency =
+        expectedSeconds > 0
+          ? Math.round((weightedEfficiency / expectedSeconds) * 100) / 100
+          : rows.length > 0
+            ? Math.round(
+                (rows.reduce((sum, record) => sum + record.efficiency, 0) /
+                  rows.length) *
+                  100,
+              ) / 100
+            : 0;
+      const hourOption = HOURS.find((item) => item.value === hour);
+
+      data.push({
+        hour: hourOption?.label || `${String(hour).padStart(2, "0")}:00`,
+        hourValue: hour,
+        "Expected Hours": Math.round((expectedSeconds / 3600) * 100) / 100,
+        "Logged Time": Math.round((loggedSeconds / 3600) * 100) / 100,
+        "Calls Actual": handledCalls,
+        "Calls Target": Math.round((expectedSeconds / 3600) * 5),
+        "Avg Talk Time (s)": avgTalkTime,
+        "Avg Hold Time (s)": avgHoldTime,
+        "Occupied %": phoneOccupancy,
+        "Available %": Math.round(availablePercent * 100) / 100,
+        "Actual Emails": actualEmails,
+        "Target Emails": targetEmails,
+        "Email Capacity": emailCapacity,
+        "Efficiency %": efficiency,
+      });
+    }
+
+    return data;
+  }, [fromHour, hourlyRecords, toHour]);
+
   const summaryMetrics = useMemo(() => {
-    if (currentKPIs.length === 0) {
+    if (dailyRecords.length === 0) {
       return {
         loggedTime: 0,
         expectedHours: 0,
-        loggedFormatted: '0h 0m',
+        loggedFormatted: "0h 0m",
         loggedAchievement: 0,
         handledCalls: 0,
         callsTarget: 0,
         callsAchievement: 0,
         avgTalkTime: 0,
         talkTarget: 180,
-        // standard target
         avgHoldTime: 0,
         holdTarget: 30,
-        // standard target
         phoneOccupancy: 0,
+        availableSeconds: 0,
         availableEmailCapacity: 0,
         targetEmails: 0,
         actualEmails: 0,
@@ -1325,309 +1370,314 @@ export default function DashboardPage() {
           phoneOccupancy: 0,
           emailCapacity: 0,
           emailUtilization: 0,
-          efficiency: 0
-        }
+          efficiency: 0,
+        },
       };
     }
-    let totalLogged = 0;
-    let totalExpected = 0;
-    let totalCalls = 0;
-    let totalTalkSeconds = 0;
-    let totalHoldSeconds = 0;
-    let occupancySum = 0;
-    let emailCapacitySum = 0;
-    let targetEmailsSum = 0;
-    let actualEmailsSum = 0;
-    let efficiencySum = 0;
-    currentKPIs.forEach(kpi => {
-      totalLogged += kpi.loggedSeconds;
-      totalExpected += kpi.expectedSeconds;
-      totalCalls += kpi.handledCalls;
-      totalTalkSeconds += kpi.avgTalkTime * kpi.handledCalls;
-      totalHoldSeconds += kpi.avgHoldTime * kpi.handledCalls;
-      occupancySum += kpi.phoneOccupancy;
-      emailCapacitySum += kpi.availableEmailCapacity;
-      targetEmailsSum += kpi.targetEmails;
-      actualEmailsSum += kpi.actualEmails;
-      efficiencySum += kpi.efficiency;
+
+    let totalLoggedSeconds = 0;
+    let totalExpectedSeconds = 0;
+    let totalAvailableSeconds = 0;
+    let totalHandledCalls = 0;
+    let weightedTalkSeconds = 0;
+    let weightedHoldSeconds = 0;
+    let weightedOccupancy = 0;
+    let weightedEfficiency = 0;
+    let availableEmailCapacity = 0;
+    let targetEmails = 0;
+    let actualEmails = 0;
+
+    dailyRecords.forEach((record) => {
+      totalLoggedSeconds += record.loggedSeconds;
+      totalExpectedSeconds += record.expectedSeconds;
+      totalAvailableSeconds += record.availableSeconds;
+      totalHandledCalls += record.handledCalls;
+      weightedTalkSeconds += record.avgTalkTime * record.handledCalls;
+      weightedHoldSeconds += record.avgHoldTime * record.handledCalls;
+      weightedOccupancy += record.phoneOccupancy * record.loggedSeconds;
+      weightedEfficiency += record.efficiency * record.expectedSeconds;
+      availableEmailCapacity += record.availableEmailCapacity;
+      targetEmails += record.targetEmails;
+      actualEmails += record.actualEmails;
     });
-    const count = currentKPIs.length;
-    const avgTalkTime = totalCalls > 0 ? Math.round(totalTalkSeconds / totalCalls) : 0;
-    const avgHoldTime = totalCalls > 0 ? Math.round(totalHoldSeconds / totalCalls) : 0;
-    const loggedHours = Math.floor(totalLogged / 3600);
-    const loggedMins = Math.round(totalLogged % 3600 / 60);
-    const targetCalls = count * 45; // average daily target of 45 calls per employee
+
+    const loggedHours = Math.floor(totalLoggedSeconds / 3600);
+    const loggedMinutes = Math.floor((totalLoggedSeconds % 3600) / 60);
+    const avgTalkTime =
+      totalHandledCalls > 0
+        ? Math.round(weightedTalkSeconds / totalHandledCalls)
+        : 0;
+    const avgHoldTime =
+      totalHandledCalls > 0
+        ? Math.round(weightedHoldSeconds / totalHandledCalls)
+        : 0;
+    const phoneOccupancy =
+      totalLoggedSeconds > 0
+        ? Math.round((weightedOccupancy / totalLoggedSeconds) * 100) / 100
+        : 0;
+    const actualEfficiency =
+      totalExpectedSeconds > 0
+        ? Math.round((weightedEfficiency / totalExpectedSeconds) * 100) / 100
+        : Math.round(
+            (dailyRecords.reduce((sum, record) => sum + record.efficiency, 0) /
+              dailyRecords.length) *
+              100,
+          ) / 100;
+    const callsTarget = Math.round((totalExpectedSeconds / 3600) * 5);
 
     return {
-      loggedTime: totalLogged,
-      expectedHours: totalExpected / 3600,
-      loggedFormatted: `${loggedHours}h ${loggedMins}m`,
-      loggedAchievement: totalExpected > 0 ? Math.round(totalLogged / totalExpected * 100) : 0,
-      handledCalls: totalCalls,
-      callsTarget: targetCalls,
-      callsAchievement: targetCalls > 0 ? Math.min(100, Math.round(totalCalls / targetCalls * 100)) : 0,
+      loggedTime: totalLoggedSeconds,
+      expectedHours: Math.round((totalExpectedSeconds / 3600) * 100) / 100,
+      loggedFormatted: `${loggedHours}h ${loggedMinutes}m`,
+      loggedAchievement:
+        totalExpectedSeconds > 0
+          ? Math.round((totalLoggedSeconds / totalExpectedSeconds) * 100)
+          : 0,
+      handledCalls: totalHandledCalls,
+      callsTarget,
+      callsAchievement:
+        callsTarget > 0
+          ? Math.round((totalHandledCalls / callsTarget) * 100)
+          : 0,
       avgTalkTime,
       talkTarget: 180,
       avgHoldTime,
       holdTarget: 30,
-      phoneOccupancy: Math.round(occupancySum / count),
-      availableEmailCapacity: Math.round(emailCapacitySum),
-      targetEmails: targetEmailsSum,
-      actualEmails: actualEmailsSum,
-      emailUtilization: targetEmailsSum > 0 ? Math.round(actualEmailsSum / targetEmailsSum * 100) : 0,
-      actualEfficiency: Math.round(efficiencySum / count * 10) / 10,
-      // Dynamic pseudo-trends based on aggregated data properties
+      phoneOccupancy,
+      availableSeconds: totalAvailableSeconds,
+      availableEmailCapacity,
+      targetEmails,
+      actualEmails,
+      emailUtilization:
+        targetEmails > 0
+          ? Math.round((actualEmails / targetEmails) * 10000) / 100
+          : 0,
+      actualEfficiency,
       trends: {
-        loggedTime: (totalLogged % 11) - 4,
-        handledCalls: (totalCalls % 15) - 3,
-        avgTalkTime: (avgTalkTime % 9) - 4,
-        avgHoldTime: (avgHoldTime % 11) - 5,
-        phoneOccupancy: (Math.round(occupancySum) % 7) - 2,
-        emailCapacity: (Math.round(emailCapacitySum) % 25) - 15,
-        emailUtilization: (actualEmailsSum % 13) - 3,
-        efficiency: (Math.round(efficiencySum) % 6) - 2
-      }
+        loggedTime: calculateRealTrend(hourlyChartData, "Logged Time"),
+        handledCalls: calculateRealTrend(hourlyChartData, "Calls Actual"),
+        avgTalkTime: calculateRealTrend(hourlyChartData, "Avg Talk Time (s)"),
+        avgHoldTime: calculateRealTrend(hourlyChartData, "Avg Hold Time (s)"),
+        phoneOccupancy: calculateRealTrend(hourlyChartData, "Occupied %"),
+        emailCapacity: calculateRealTrend(hourlyChartData, "Email Capacity"),
+        emailUtilization: calculateRealTrend(hourlyChartData, "Actual Emails"),
+        efficiency: calculateRealTrend(hourlyChartData, "Efficiency %"),
+      },
     };
-  }, [currentKPIs]);
+  }, [dailyRecords, hourlyChartData]);
 
-  // Helper for rendering trend indicators
   const renderTrend = (value, inverse = false) => {
     const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
     const isPositive = safeValue >= 0;
     const isGood = inverse ? !isPositive : isPositive;
-    const color = isGood ? 'text-emerald-600' : 'text-rose-600';
+    const color = isGood ? "text-emerald-600" : "text-rose-600";
     const Icon = isPositive ? ArrowUpRight : ArrowDownRight;
 
     return (
-      <span className={`${color} font-mono flex items-center gap-0.5`}>
+      <span className={`${color} flex items-center gap-0.5 font-mono`}>
         <Icon className="h-3 w-3" /> {Math.abs(safeValue)}%
       </span>
     );
   };
 
-  // Hourly chart data series (aggregated hourly across all filtered employees)
-  const hourlyChartData = useMemo(() => {
-    const data = [];
-    const activeFilterEmployees = selectedEmpIds.includes('all') || selectedEmpIds.length === 0 ? activeEmployees : activeEmployees.filter(e => selectedEmpIds.includes(e.id));
-    for (let h = fromHour; h <= toHour; h++) {
-      let expected = 0;
-      let logged = 0;
-      let calls = 0;
-      let talkSum = 0;
-      let holdSum = 0;
-      let callsWithDuration = 0;
-      let actualEmails = 0;
-      let targetEmails = 0;
-      let emailCapacity = 0;
-      let occupiedSec = 0;
-      let efficiencySum = 0;
-      let workingAgentsCount = 0;
-      activeFilterEmployees.forEach(emp => {
-        const hr = generateHourlyRecord(emp.id, selectedDate, h);
-        expected += hr.expectedSeconds;
-        logged += hr.loggedSeconds;
-        calls += hr.handledCalls;
-        actualEmails += hr.actualEmails;
-        targetEmails += hr.targetEmails;
-        emailCapacity += hr.availableEmailCapacity;
-        occupiedSec += hr.occupiedSeconds;
-        if (hr.handledCalls > 0) {
-          const avgT = hr.totalTalkSeconds / hr.handledCalls;
-          const avgH = hr.totalHoldSeconds / hr.handledCalls;
-          talkSum += avgT;
-          holdSum += avgH;
-          callsWithDuration++;
-        }
-        if (hr.expectedSeconds > 0) {
-          efficiencySum += hr.efficiency;
-          workingAgentsCount++;
-        }
-      });
-      const avgTalk = callsWithDuration > 0 ? Math.round(talkSum / callsWithDuration) : 0;
-      const avgHold = callsWithDuration > 0 ? Math.round(holdSum / callsWithDuration) : 0;
-      const occupancy = logged > 0 ? Math.round(occupiedSec / logged * 100) : 0;
-      const efficiency = workingAgentsCount > 0 ? Math.round(efficiencySum / workingAgentsCount) : 0;
-      const hourObj = HOURS.find(item => item.value === h);
-      const hourLabel = hourObj ? hourObj.label : `${h}:00`;
-      data.push({
-        hour: hourLabel,
-        'Expected Hours': Math.round(expected / 3600 * 10) / 10,
-        'Logged Time': Math.round(logged / 3600 * 10) / 10,
-        'Calls Actual': calls,
-        'Calls Target': activeFilterEmployees.length * 5,
-        // 5 calls target per working hour
-        'Avg Talk Time (s)': avgTalk,
-        'Avg Hold Time (s)': avgHold,
-        'Occupied %': occupancy,
-        'Available %': Math.max(0, 100 - occupancy),
-        'Actual Emails': actualEmails,
-        'Target Emails': targetEmails,
-        'Email Capacity': emailCapacity,
-        'Efficiency %': efficiency
-      });
-    }
-    return data;
-  }, [selectedEmpIds, activeEmployees, selectedDate, fromHour, toHour]);
-
-  // Donut chart phone occupancy parts
   const donutData = useMemo(() => {
-    const occupied = summaryMetrics.phoneOccupancy;
-    const available = Math.round((100 - occupied) * 0.7); // Let's say available is 70% of non-occupied
-    const idle = Math.max(0, 100 - occupied - available); // Rest is idle
-    return [{
-      name: 'Occupied',
-      value: occupied,
-      color: '#0ea5e9'
-    },
-    // Sky-500
-    {
-      name: 'Available',
-      value: available,
-      color: '#10b981'
-    },
-    // Emerald-500
-    {
-      name: 'Idle',
-      value: idle,
-      color: '#f59e0b'
-    } // Amber-500
+    const occupied = clamp(summaryMetrics.phoneOccupancy, 0, 100);
+    const rawAvailable =
+      summaryMetrics.loggedTime > 0
+        ? (summaryMetrics.availableSeconds / summaryMetrics.loggedTime) * 100
+        : 0;
+    const available = clamp(rawAvailable, 0, Math.max(0, 100 - occupied));
+    const idle = Math.max(0, 100 - occupied - available);
+
+    return [
+      {
+        name: "Occupied",
+        value: Math.round(occupied * 100) / 100,
+        color: "#0ea5e9",
+      },
+      {
+        name: "Available",
+        value: Math.round(available * 100) / 100,
+        color: "#10b981",
+      },
+      {
+        name: "Idle",
+        value: Math.round(idle * 100) / 100,
+        color: "#f59e0b",
+      },
     ];
-  }, [summaryMetrics.phoneOccupancy]);
+  }, [summaryMetrics]);
 
-  // Team Insights Generation
   const teamInsights = useMemo(() => {
-    if (allAggregatedKPIs.length === 0) return null;
+    if (dailyRecords.length === 0) {
+      return null;
+    }
 
-    const allAggregated = allAggregatedKPIs;
-
-    // Filter by team if Employee belongs to a team or we are just summarizing
-    let highestEff = {
-      name: 'N/A',
-      val: 0
-    };
-    let mostCalls = {
-      name: 'N/A',
-      val: 0
-    };
-    let highestOcc = 0;
-    let lowestEff = 100;
+    let highestEfficiency = { name: "N/A", value: Number.NEGATIVE_INFINITY };
+    let mostCalls = { name: "N/A", value: Number.NEGATIVE_INFINITY };
+    let highestOccupancy = 0;
+    let lowestEfficiency = Number.POSITIVE_INFINITY;
     let efficiencySum = 0;
-    allAggregated.forEach(kpi => {
-      efficiencySum += kpi.efficiency;
-      if (kpi.efficiency > highestEff.val) {
-        highestEff = {
-          name: kpi.employeeName,
-          val: kpi.efficiency
-        };
-      }
-      if (kpi.handledCalls > mostCalls.val) {
-        mostCalls = {
-          name: kpi.employeeName,
-          val: kpi.handledCalls
-        };
-      }
-      if (kpi.phoneOccupancy > highestOcc) {
-        highestOcc = kpi.phoneOccupancy;
-      }
-      if (kpi.efficiency < lowestEff) {
-        lowestEff = kpi.efficiency;
-      }
-    });
-    return {
-      highestEffName: highestEff.name,
-      highestEffVal: highestEff.val,
-      mostCallsName: mostCalls.name,
-      mostCallsVal: mostCalls.val,
-      highestOccupancy: highestOcc,
-      lowestEfficiency: lowestEff === 100 ? 0 : lowestEff,
-      teamAverage: Math.round(efficiencySum / allAggregated.length)
-    };
-  }, [allAggregatedKPIs]);
 
-  // Dynamic sparkline data derived from hourlyChartData
+    dailyRecords.forEach((record) => {
+      efficiencySum += record.efficiency;
+
+      if (record.efficiency > highestEfficiency.value) {
+        highestEfficiency = {
+          name: record.employeeName,
+          value: record.efficiency,
+        };
+      }
+
+      if (record.handledCalls > mostCalls.value) {
+        mostCalls = {
+          name: record.employeeName,
+          value: record.handledCalls,
+        };
+      }
+
+      highestOccupancy = Math.max(highestOccupancy, record.phoneOccupancy);
+      lowestEfficiency = Math.min(lowestEfficiency, record.efficiency);
+    });
+
+    return {
+      highestEffName: highestEfficiency.name,
+      highestEffVal: highestEfficiency.value,
+      mostCallsName: mostCalls.name,
+      mostCallsVal: mostCalls.value,
+      highestOccupancy: Math.round(highestOccupancy * 100) / 100,
+      lowestEfficiency:
+        lowestEfficiency === Number.POSITIVE_INFINITY
+          ? 0
+          : Math.round(lowestEfficiency * 100) / 100,
+      teamAverage:
+        Math.round((efficiencySum / dailyRecords.length) * 100) / 100,
+    };
+  }, [dailyRecords]);
+
   const sparklineDataMap = useMemo(() => {
     const keys = [
-      'Logged Time',
-      'Calls Actual',
-      'Avg Talk Time (s)',
-      'Avg Hold Time (s)',
-      'Occupied %',
-      'Email Capacity',
-      'Actual Emails',
-      'Efficiency %',
+      "Logged Time",
+      "Calls Actual",
+      "Avg Talk Time (s)",
+      "Avg Hold Time (s)",
+      "Occupied %",
+      "Email Capacity",
+      "Actual Emails",
+      "Efficiency %",
     ];
 
-    return keys.reduce((acc, key) => {
-      acc[key] = hourlyChartData.map((d) => ({
-        val: d[key] ?? 0,
-        idx: d.hour,
+    return keys.reduce((accumulator, key) => {
+      accumulator[key] = hourlyChartData.map((row) => ({
+        val: Number(row[key] || 0),
+        idx: row.hour,
       }));
 
-      return acc;
+      return accumulator;
     }, {});
   }, [hourlyChartData]);
 
   const getSparklineData = useCallback(
     (key) => sparklineDataMap[key] || [],
-    [sparklineDataMap]
+    [sparklineDataMap],
   );
+
   const triggerRefresh = async () => {
     setIsRefreshing(true);
     window.dispatchEvent(
-      new CustomEvent('show-toast', {
-        detail: 'Refreshing US Visa employees from Kronos...',
-      })
+      new CustomEvent("show-toast", {
+        detail: "Refreshing matched US Visa KPI records...",
+      }),
     );
 
     try {
-      await loadKronosEmployees({ background: true, force: true });
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await loadDashboardBootstrap();
+      await loadDashboardData();
 
       window.dispatchEvent(
-        new CustomEvent('show-toast', {
-          detail: 'US Visa employee list and KPI aggregates updated successfully.',
-        })
+        new CustomEvent("show-toast", {
+          detail: "Matched employee and KPI records updated successfully.",
+        }),
       );
     } catch {
       window.dispatchEvent(
-        new CustomEvent('show-toast', {
-          detail: 'Unable to refresh US Visa employees from Kronos.',
-        })
+        new CustomEvent("show-toast", {
+          detail: "Unable to refresh matched KPI records.",
+        }),
       );
     } finally {
       setIsRefreshing(false);
-      setTimeout(
+      window.setTimeout(
         () =>
           window.dispatchEvent(
-            new CustomEvent('show-toast', { detail: null })
+            new CustomEvent("show-toast", {
+              detail: null,
+            }),
           ),
-        3500
+        3500,
       );
     }
   };
-  const handleExport = async (format) => {
-    window.dispatchEvent(new CustomEvent('show-toast', { detail: `Preparing US Visa KPI report in ${format} format...` }));
-    
-    // Simulate non-blocking async work
-    await new Promise(r => setTimeout(r, 1000));
-    await new Promise(r => requestAnimationFrame(r));
 
-    // Mock File Download trigger
-    const element = document.createElement("a");
-    const file = new Blob([`US Visa KPI Report\nDate: ${selectedDate}\nPeriod: ${HOURS.find(h => h.value === fromHour)?.label || ''} to ${HOURS.find(h => h.value === toHour)?.label || ''}\nTarget Employee: ${selectedEmployeeName}\n\nMetrics:\nActual Logged Time: ${summaryMetrics.loggedFormatted} (Achievement: ${summaryMetrics.loggedAchievement}%)\nHandled Calls: ${summaryMetrics.handledCalls}\nAverage Talk Time: $<AnimatedNumber value={summaryMetrics.avgTalkTime} />s\nAverage Hold Time: $<AnimatedNumber value={summaryMetrics.avgHoldTime} />s\nPhone Occupancy: $<AnimatedNumber value={summaryMetrics.phoneOccupancy} />%\nActual Efficiency: $<AnimatedNumber value={summaryMetrics.actualEfficiency} />%`], {
-      type: 'text/plain'
+  const handleExport = async (format) => {
+    window.dispatchEvent(
+      new CustomEvent("show-toast", {
+        detail: `Preparing matched US Visa KPI report in ${format} format...`,
+      }),
+    );
+
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+
+    const startLabel = HOURS.find((hour) => hour.value === fromHour)?.label || "";
+    const endLabel = END_TIMES.find((hour) => hour.value === toHour)?.label || "";
+    const reportLines = [
+      "US Visa KPI Dashboard Report",
+      `Date: ${selectedDate}`,
+      `Period: ${startLabel} to ${endLabel}`,
+      `Employees: ${selectedEmployeeName}`,
+      "Source: matched us_visa_kpi_employees and us_visa_kpi_hourly_summary records",
+      "",
+      `Actual Logged Time: ${summaryMetrics.loggedFormatted}`,
+      `Logged Achievement: ${formatMetric(summaryMetrics.loggedAchievement)}%`,
+      `Handled Calls: ${formatMetric(summaryMetrics.handledCalls)}`,
+      `Average Talk Time: ${formatMetric(summaryMetrics.avgTalkTime)}s`,
+      `Average Hold Time: ${formatMetric(summaryMetrics.avgHoldTime)}s`,
+      `Phone Occupancy: ${formatMetric(summaryMetrics.phoneOccupancy)}%`,
+      `Available Email Capacity: ${formatMetric(summaryMetrics.availableEmailCapacity)}`,
+      `Actual Emails: ${formatMetric(summaryMetrics.actualEmails)}`,
+      `Target Emails: ${formatMetric(summaryMetrics.targetEmails)}`,
+      `Email Utilization: ${formatMetric(summaryMetrics.emailUtilization)}%`,
+      `Actual Efficiency: ${formatMetric(summaryMetrics.actualEfficiency)}%`,
+    ];
+
+    const extension = format === "Excel" ? "csv" : "txt";
+    const file = new Blob([reportLines.join("\n")], {
+      type: extension === "csv" ? "text/csv" : "text/plain",
     });
-    element.href = URL.createObjectURL(file);
-    element.download = `US_Visa_KPI_${selectedEmployeeName.replace(/\s+/g, '_')}_${selectedDate}.${format === 'Excel' ? 'csv' : 'txt'}`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-    window.dispatchEvent(new CustomEvent('show-toast', { detail: `Report successfully compiled & downloaded!` }));
-    setTimeout(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: null })), 4000);
+    const link = document.createElement("a");
+    const objectUrl = URL.createObjectURL(file);
+
+    link.href = objectUrl;
+    link.download = `US_Visa_Matched_KPI_${selectedDate}.${extension}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+
+    window.dispatchEvent(
+      new CustomEvent("show-toast", {
+        detail: "Matched KPI report downloaded successfully.",
+      }),
+    );
   };
+
   const handlePrint = () => {
     window.print();
   };
+
+  const isKronosEmployeesLoading = isBootstrapLoading;
+  const kronosEmployeesError = bootstrapError;
+  const loadKronosEmployees = loadDashboardBootstrap;
   return <div className="space-y-6" id="dashboard-container">
 
       {/* Title & Actions Bar */}
@@ -1637,7 +1687,7 @@ export default function DashboardPage() {
             US Visa KPI Dashboard
           </h1>
           <p className="text-sm text-slate-500 font-sans mt-0.5">
-            Real-Time Productivity & Performance Monitoring
+            Matched Database Productivity & Performance Monitoring
           </p>
         </div>
 
@@ -1677,7 +1727,7 @@ export default function DashboardPage() {
 
                 <div className={`flex h-11 items-center gap-2 ${FILTER_EDGE} border border-[#D0D5DD] bg-gray-50 px-4 text-sm font-semibold text-[#667085]`}>
                   <RefreshCw className="h-4 w-4 animate-spin text-sibs-primary-1" />
-                  <span className="truncate">Loading US Visa employees...</span>
+                  <span className="truncate">Loading matched US Visa employees...</span>
                 </div>
               </>
             ) : kronosEmployeesError ? (
@@ -1689,14 +1739,14 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   onClick={() =>
-                    loadKronosEmployees({ force: true }).catch(() => {})
+                    loadDashboardBootstrap().catch(() => {})
                   }
                   className={`flex h-11 w-full items-center gap-2 ${FILTER_EDGE} border border-rose-200 bg-rose-50 px-4 text-left text-sm font-semibold text-rose-700 transition hover:bg-rose-100`}
                   title={kronosEmployeesError}
                 >
                   <RefreshCw className="h-4 w-4 shrink-0" />
                   <span className="truncate">
-                    Failed to load employees. Click to retry.
+                    Failed to load matched employees. Click to retry.
                   </span>
                 </button>
               </>
@@ -1720,7 +1770,7 @@ export default function DashboardPage() {
                 <div className={`flex h-11 items-center gap-2 ${FILTER_EDGE} border border-[#D0D5DD] bg-gray-50 px-4 text-sm font-semibold text-[#667085]`}>
                   <User className="h-4 w-4" />
                   <span className="truncate">
-                    No active US Visa employees found
+                    No matched active US Visa employees found
                   </span>
                 </div>
               </>
@@ -1752,11 +1802,16 @@ export default function DashboardPage() {
             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
               <DashboardTimeDropdown
                 value={fromHour}
-                options={HOURS.filter((hour) => hour.value < toHour)}
+                options={HOURS}
                 onChange={(nextHour) => {
-                  if (nextHour < toHour) {
-                    startTransition(() => setFromHour(nextHour));
-                  }
+                  startTransition(() => {
+                    setFromHour(nextHour);
+
+                    // Keep the end time later than the selected start time.
+                    if (toHour <= nextHour) {
+                      setToHour(Math.min(24, nextHour + 1));
+                    }
+                  });
                 }}
                 placeholder="Search start time..."
               />
@@ -1765,7 +1820,9 @@ export default function DashboardPage() {
 
               <DashboardTimeDropdown
                 value={toHour}
-                options={HOURS.filter((hour) => hour.value > fromHour)}
+                options={END_TIMES.filter(
+                  (endTime) => endTime.value > fromHour,
+                )}
                 onChange={(nextHour) => {
                   if (nextHour > fromHour) {
                     startTransition(() => setToHour(nextHour));
@@ -1778,6 +1835,29 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {dashboardDataError ? (
+        <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{dashboardDataError}</span>
+        </div>
+      ) : null}
+
+      {showDashboardLoading ? (
+        <div className="flex min-h-[46px] items-center justify-center gap-2 rounded-xl border border-[#D7DEE8] bg-white px-4 py-3 text-sm font-semibold text-[#667085] shadow-sm">
+          <RefreshCw className="h-4 w-4 animate-spin text-[#0D4676]" />
+          <span>Loading matched KPI records...</span>
+        </div>
+      ) : null}
+
+      {showNoDashboardRecords ? (
+        <div className="flex min-h-[46px] items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+          <Database className="h-4 w-4" />
+          <span>No matched KPI records were found for the selected date and time range.</span>
+        </div>
+      ) : null}
+
+      {showDashboardContent ? (
+        <>
       {/* KPI Summary Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="kpi-cards-grid">
         <div className="sibs-page-card-in h-full" style={{ animationDelay: '0ms' }}>
@@ -1943,10 +2023,10 @@ export default function DashboardPage() {
           <div className="mt-3 min-w-0 flex-1">
             <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Phone Occupancy</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
-              {summaryMetrics.phoneOccupancy}%
+              {formatMetric(summaryMetrics.phoneOccupancy)}%
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
-              <span className="truncate">Avg Working Hours</span>
+              <span className="truncate">Matched Logged Records</span>
               {renderTrend(summaryMetrics.trends?.phoneOccupancy ?? 0)}
             </div>
           </div>
@@ -1973,7 +2053,7 @@ export default function DashboardPage() {
             </div>
             <div className="text-right">
               <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-50 text-slate-500">
-                Tracked Live
+                Matched Records
               </span>
             </div>
           </div>
@@ -2010,7 +2090,7 @@ export default function DashboardPage() {
             </div>
             <div className="text-right">
               <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-pink-50 text-pink-600">
-                {summaryMetrics.emailUtilization}% Utilization
+                {formatMetric(summaryMetrics.emailUtilization)}% Utilization
               </span>
             </div>
           </div>
@@ -2047,14 +2127,14 @@ export default function DashboardPage() {
             </div>
             <div className="text-right">
               <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full ${summaryMetrics.actualEfficiency >= 95 ? 'bg-emerald-50 text-emerald-600' : summaryMetrics.actualEfficiency >= 80 ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
-                {summaryMetrics.actualEfficiency}%
+                {formatMetric(summaryMetrics.actualEfficiency)}%
               </span>
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
             <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Actual Efficiency</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
-              {summaryMetrics.actualEfficiency}%
+              {formatMetric(summaryMetrics.actualEfficiency)}%
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Target: 95%</span>
@@ -2282,7 +2362,7 @@ export default function DashboardPage() {
               </ResponsiveContainer>
               {/* Central Text */}
               <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
-                <span className="text-4xl font-extrabold font-mono text-slate-600 tracking-tighter">{summaryMetrics.phoneOccupancy}%</span>
+                <span className="text-4xl font-extrabold font-mono text-slate-600 tracking-tighter">{formatMetric(summaryMetrics.phoneOccupancy)}%</span>
                 <span className="text-[10px] font-bold px-3 py-1 rounded-full mt-1.5 shadow-sm transition-colors bg-sky-100 text-sky-700 ring-1 ring-sky-200 uppercase">
                   Occupied
                 </span>
@@ -2405,7 +2485,7 @@ export default function DashboardPage() {
               })()}
               
               <div className="flex flex-col items-center -mt-8 z-10">
-                <span className="text-4xl font-extrabold font-mono text-slate-600 tracking-tighter">{summaryMetrics.actualEfficiency}%</span>
+                <span className="text-4xl font-extrabold font-mono text-slate-600 tracking-tighter">{formatMetric(summaryMetrics.actualEfficiency)}%</span>
                 <span className={`text-[10px] font-bold px-3 py-1 rounded-full mt-1.5 shadow-sm transition-colors ${summaryMetrics.actualEfficiency >= 95 ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200' : summaryMetrics.actualEfficiency >= 80 ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-200' : 'bg-red-100 text-red-700 ring-1 ring-red-200'}`}>
                   {summaryMetrics.actualEfficiency >= 95 ? 'EXCELLENT' : summaryMetrics.actualEfficiency >= 80 ? 'NEEDS ATTENTION' : 'ACTION REQUIRED'}
                 </span>
@@ -2435,13 +2515,13 @@ export default function DashboardPage() {
       {teamInsights && <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200" id="team-insights-container">
           <h3 className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
             <BarChart3 className="h-4 w-4 text-slate-500" />
-            Automated Operational Team Insights
+            Matched Operational Team Insights
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm min-w-0">
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Highest Performing</p>
               <p className="text-xs font-bold text-slate-800 truncate mt-1">{teamInsights.highestEffName}</p>
-              <p className="truncate text-lg font-bold font-mono text-emerald-600 mt-1">{teamInsights.highestEffVal}%</p>
+              <p className="truncate text-lg font-bold font-mono text-emerald-600 mt-1">{formatMetric(teamInsights.highestEffVal)}%</p>
             </div>
 
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm min-w-0">
@@ -2453,21 +2533,23 @@ export default function DashboardPage() {
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm min-w-0">
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Highest Occupancy</p>
               <p className="truncate text-xs font-bold text-slate-800 mt-1">Peak Occupancy</p>
-              <p className="truncate text-lg font-bold font-mono text-indigo-600 mt-1">{teamInsights.highestOccupancy}%</p>
+              <p className="truncate text-lg font-bold font-mono text-indigo-600 mt-1">{formatMetric(teamInsights.highestOccupancy)}%</p>
             </div> 
 
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm min-w-0">
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Lowest Efficiency</p>
               <p className="truncate text-xs font-bold text-slate-800 mt-1">Needs Coaching</p>
-              <p className="truncate text-lg font-bold font-mono text-red-500 mt-1">{teamInsights.lowestEfficiency}%</p>
+              <p className="truncate text-lg font-bold font-mono text-red-500 mt-1">{formatMetric(teamInsights.lowestEfficiency)}%</p>
             </div>
 
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm sm:col-span-2 lg:col-span-1 min-w-0">
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Team Avg Efficiency</p>
               <p className="truncate text-xs font-bold text-slate-800 mt-1">Operational Benchmark</p>
-              <p className="truncate text-lg font-bold font-mono text-slate-700 mt-1">{teamInsights.teamAverage}%</p>
+              <p className="truncate text-lg font-bold font-mono text-slate-700 mt-1">{formatMetric(teamInsights.teamAverage)}%</p>
             </div>
           </div>
         </div>}
+        </>
+      ) : null}
     </div>;
 }

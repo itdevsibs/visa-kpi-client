@@ -4,7 +4,8 @@ import { useRoster } from "../../../services/context/RosterContext.jsx";
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "../../../components/ui/button.jsx";
 
 import {
@@ -19,6 +20,8 @@ import {
   Upload,
   X,
   FileSpreadsheet,
+  ChevronDown,
+  Check,
 } from "lucide-react";
 
 import * as XLSX from "xlsx";
@@ -32,6 +35,317 @@ const DEFAULT_TASK_ORDER_OPTIONS = [
   "GSS 2.0 TO11 - SEASIA",
   "GSS 2.0 TO12 - SEASIA",
 ];
+
+
+const FILTER_EDGE = "rounded-[10px]";
+
+function normalizeDropdownText(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function SettingsDropdownPortal({
+  open,
+  anchorRef,
+  children,
+  onClose,
+  maxHeight = 280,
+  minWidth = 0,
+}) {
+  const dropdownRef = useRef(null);
+  const [style, setStyle] = useState({
+    top: 0,
+    left: 0,
+    width: 0,
+    maxHeight,
+  });
+
+  useLayoutEffect(() => {
+    if (!open || !anchorRef?.current) {
+      return undefined;
+    }
+
+    function updatePosition() {
+      const anchor = anchorRef.current;
+
+      if (!anchor) {
+        return;
+      }
+
+      const rect = anchor.getBoundingClientRect();
+      const viewportWidth =
+        window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight =
+        window.innerHeight || document.documentElement.clientHeight || 0;
+
+      const gap = 8;
+      const safePadding = 8;
+      const dropdownWidth = Math.max(rect.width, minWidth);
+      const spaceBelow = viewportHeight - rect.bottom - gap - safePadding;
+      const spaceAbove = rect.top - gap - safePadding;
+      const shouldOpenUp = spaceBelow < 190 && spaceAbove > spaceBelow;
+      const availableHeight = shouldOpenUp ? spaceAbove : spaceBelow;
+      const cleanMaxHeight = Math.max(
+        170,
+        Math.min(maxHeight, Math.max(availableHeight, 170))
+      );
+
+      const top = shouldOpenUp
+        ? Math.max(safePadding, rect.top - cleanMaxHeight - gap)
+        : Math.min(
+            rect.bottom + gap,
+            viewportHeight - cleanMaxHeight - safePadding
+          );
+
+      const maxLeft = Math.max(
+        safePadding,
+        viewportWidth - dropdownWidth - safePadding
+      );
+
+      setStyle({
+        top,
+        left: Math.min(Math.max(safePadding, rect.left), maxLeft),
+        width: dropdownWidth,
+        maxHeight: cleanMaxHeight,
+      });
+    }
+
+    updatePosition();
+
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorRef, maxHeight, minWidth, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    function handleOutsideClick(event) {
+      const clickedAnchor = anchorRef?.current?.contains(event.target);
+      const clickedDropdown = dropdownRef.current?.contains(event.target);
+
+      if (!clickedAnchor && !clickedDropdown) {
+        onClose?.();
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        onClose?.();
+      }
+    }
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("touchstart", handleOutsideClick);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("touchstart", handleOutsideClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [anchorRef, onClose, open]);
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      ref={dropdownRef}
+      onMouseDownCapture={(event) => event.stopPropagation()}
+      onTouchStartCapture={(event) => event.stopPropagation()}
+      className={`fixed z-[999999] overflow-hidden ${FILTER_EDGE} border border-[#D7DEE8] bg-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]`}
+      style={{
+        top: `${style.top}px`,
+        left: `${style.left}px`,
+        width: `${style.width}px`,
+      }}
+    >
+      <div
+        className="sibs-scrollbar overflow-y-auto py-2"
+        style={{ maxHeight: `${style.maxHeight}px` }}
+      >
+        {children}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function SettingsSelectDropdown({
+  value = "",
+  options = [],
+  onChange,
+  placeholder = "Select option...",
+  searchPlaceholder = "Search options...",
+  disabled = false,
+  size = "small",
+  minWidth = 180,
+  maxHeight = 280,
+  className = "",
+}) {
+  const inputRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
+
+  const normalizedOptions = useMemo(
+    () =>
+      options.map((option) => {
+        if (
+          option &&
+          typeof option === "object" &&
+          Object.prototype.hasOwnProperty.call(option, "value")
+        ) {
+          return {
+            value: String(option.value ?? ""),
+            label: String(option.label ?? option.value ?? ""),
+          };
+        }
+
+        return {
+          value: String(option ?? ""),
+          label: String(option ?? ""),
+        };
+      }),
+    [options]
+  );
+
+  const selectedOption = useMemo(
+    () =>
+      normalizedOptions.find(
+        (option) => String(option.value) === String(value ?? "")
+      ) || null,
+    [normalizedOptions, value]
+  );
+
+  const visibleOptions = useMemo(() => {
+    const query = normalizeDropdownText(searchText);
+
+    if (!query) {
+      return normalizedOptions;
+    }
+
+    return normalizedOptions.filter((option) =>
+      normalizeDropdownText(`${option.label} ${option.value}`).includes(query)
+    );
+  }, [normalizedOptions, searchText]);
+
+  const isMedium = size === "medium";
+  const inputHeight = isMedium ? "h-11" : "h-9";
+  const inputText = isMedium ? "text-sm" : "text-xs";
+  const inputPadding = isMedium ? "px-4 pr-11" : "px-3 pr-10";
+  const arrowRight = isMedium ? "right-4" : "right-3";
+
+  function openDropdown() {
+    if (disabled) {
+      return;
+    }
+
+    setSearchText("");
+    setOpen(true);
+  }
+
+  function closeDropdown() {
+    setOpen(false);
+    setSearchText("");
+  }
+
+  function selectOption(option) {
+    onChange?.(option.value);
+    closeDropdown();
+  }
+
+  return (
+    <div className={`relative min-w-0 overflow-visible ${className}`}>
+      <div className="relative overflow-visible">
+        <input
+          ref={inputRef}
+          type="text"
+          value={open ? searchText : selectedOption?.label || ""}
+          onChange={(event) => {
+            setSearchText(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={openDropdown}
+          onClick={openDropdown}
+          disabled={disabled}
+          placeholder={open ? searchPlaceholder : placeholder}
+          autoComplete="off"
+          className={`${inputHeight} w-full ${FILTER_EDGE} border border-[#D0D5DD] bg-white ${inputPadding} ${inputText} font-bold text-[#174A7C] outline-none transition placeholder:font-semibold placeholder:text-[#98A2B3] disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400 hover:border-[#0D4676]/30 hover:bg-[#F8FAFC] focus:border-[#0D4676] focus:ring-4 focus:ring-[#0D4676]/10`}
+        />
+
+        <ChevronDown
+          size={isMedium ? 18 : 16}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (disabled) {
+              return;
+            }
+
+            setSearchText("");
+            setOpen((currentOpen) => !currentOpen);
+          }}
+          className={`absolute ${arrowRight} top-1/2 -translate-y-1/2 cursor-pointer text-[#0D4676] transition-transform duration-300 ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+
+        <SettingsDropdownPortal
+          open={open && !disabled}
+          anchorRef={inputRef}
+          minWidth={minWidth}
+          maxHeight={maxHeight}
+          onClose={closeDropdown}
+        >
+          {visibleOptions.length > 0 ? (
+            visibleOptions.map((option) => {
+              const selected =
+                String(option.value) === String(value ?? "");
+
+              return (
+                <button
+                  key={`${option.value}-${option.label}`}
+                  type="button"
+                  onClick={() => selectOption(option)}
+                  className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm transition ${
+                    selected
+                      ? "bg-[#E7F0FA] font-extrabold text-[#0D4676]"
+                      : "font-medium text-[#475467] hover:bg-[#F8FAFC] hover:text-[#0D4676]"
+                  }`}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {option.label}
+                  </span>
+
+                  {selected ? (
+                    <Check
+                      size={15}
+                      strokeWidth={3}
+                      className="shrink-0 text-[#0D4676]"
+                    />
+                  ) : null}
+                </button>
+              );
+            })
+          ) : (
+            <div className="px-4 py-4 text-sm font-semibold text-[#667085]">
+              No options found.
+            </div>
+          )}
+        </SettingsDropdownPortal>
+      </div>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const { employees, setEmployees, syncLogs, setSyncLogs, userRole } =
@@ -752,38 +1066,47 @@ export default function SettingsPage() {
           </div>
 
           <div className="flex w-full items-center gap-1 text-xs sm:w-auto">
-            <span className="font-mono text-slate-400">Team:</span>
-            <select
+            <span className="shrink-0 font-mono text-slate-400">Team:</span>
+
+            <SettingsSelectDropdown
               value={selectedTeamFilter}
-              onChange={(e) => {
-                setSelectedTeamFilter(e.target.value);
+              options={[
+                { value: "all", label: "All Teams" },
+                ...teams.map((team) => ({
+                  value: team,
+                  label: team,
+                })),
+              ]}
+              onChange={(nextValue) => {
+                setSelectedTeamFilter(nextValue);
                 setManagementPage(1);
               }}
-              className="sibs-filter-input min-h-[36px] text-xs"
-            >
-              <option value="all">All Teams</option>
-              {teams.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+              placeholder="All Teams"
+              searchPlaceholder="Search teams..."
+              minWidth={190}
+              className="w-full sm:w-[190px]"
+            />
           </div>
 
           <div className="flex w-full items-center gap-1 text-xs sm:w-auto">
-            <span className="font-mono text-slate-400">Status:</span>
-            <select
+            <span className="shrink-0 font-mono text-slate-400">Status:</span>
+
+            <SettingsSelectDropdown
               value={selectedStatusFilter}
-              onChange={(e) => {
-                setSelectedStatusFilter(e.target.value);
+              options={[
+                { value: "all", label: "All Statuses" },
+                { value: "Active", label: "Active" },
+                { value: "Inactive", label: "Inactive" },
+              ]}
+              onChange={(nextValue) => {
+                setSelectedStatusFilter(nextValue);
                 setManagementPage(1);
               }}
-              className="sibs-filter-input min-h-[36px] text-xs"
-            >
-              <option value="all">All Statuses</option>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
+              placeholder="All Statuses"
+              searchPlaceholder="Search statuses..."
+              minWidth={170}
+              className="w-full sm:w-[170px]"
+            />
           </div>
 
           <div className="flex w-full shrink-0 items-center justify-between gap-1 text-xs sm:ml-auto sm:w-auto sm:justify-start">
@@ -851,23 +1174,26 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="mt-3 grid grid-cols-1 gap-2">
-                  <select
+                  <SettingsSelectDropdown
                     disabled={!hasAdminAccess}
                     value={getTaskOrder(emp)}
-                    onChange={(e) =>
+                    options={[
+                      { value: "", label: "Select Task Order..." },
+                      ...taskOrderOptions.map((taskOrder) => ({
+                        value: taskOrder,
+                        label: taskOrder,
+                      })),
+                    ]}
+                    onChange={(nextValue) =>
                       handleUpdateTaskAssignment(emp.id, {
-                        task_order: e.target.value,
+                        task_order: nextValue,
                       })
                     }
-                    className="sibs-filter-input w-full text-xs"
-                  >
-                    <option value="">Select Task Order...</option>
-                    {taskOrderOptions.map((taskOrder) => (
-                      <option key={taskOrder} value={taskOrder}>
-                        {taskOrder}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Select Task Order..."
+                    searchPlaceholder="Search task orders..."
+                    minWidth={280}
+                    className="w-full"
+                  />
 
                   <input
                     disabled={!hasAdminAccess}
@@ -989,22 +1315,25 @@ export default function SettingsPage() {
 
                   <td className="p-3">
                     {hasAdminAccess ? (
-                      <select
+                      <SettingsSelectDropdown
                         value={getTaskOrder(emp)}
-                        onChange={(e) =>
+                        options={[
+                          { value: "", label: "Select Task Order..." },
+                          ...taskOrderOptions.map((taskOrder) => ({
+                            value: taskOrder,
+                            label: taskOrder,
+                          })),
+                        ]}
+                        onChange={(nextValue) =>
                           handleUpdateTaskAssignment(emp.id, {
-                            task_order: e.target.value,
+                            task_order: nextValue,
                           })
                         }
-                        className="sibs-filter-input min-h-[34px] w-full max-w-[260px] text-xs"
-                      >
-                        <option value="">Select Task Order...</option>
-                        {taskOrderOptions.map((taskOrder) => (
-                          <option key={taskOrder} value={taskOrder}>
-                            {taskOrder}
-                          </option>
-                        ))}
-                      </select>
+                        placeholder="Select Task Order..."
+                        searchPlaceholder="Search task orders..."
+                        minWidth={280}
+                        className="w-full max-w-[260px]"
+                      />
                     ) : (
                       <span className="text-xs font-bold text-slate-700">
                         {getTaskOrder(emp) || "Unassigned"}
@@ -1243,22 +1572,25 @@ export default function SettingsPage() {
 
                 {hasAdminAccess ? (
                   <>
-                    <select
+                    <SettingsSelectDropdown
                       value={getTaskOrder(emp)}
-                      onChange={(e) =>
+                      options={[
+                        { value: "", label: "Select Task Order..." },
+                        ...taskOrderOptions.map((taskOrder) => ({
+                          value: taskOrder,
+                          label: taskOrder,
+                        })),
+                      ]}
+                      onChange={(nextValue) =>
                         handleUpdateTaskAssignment(emp.id, {
-                          task_order: e.target.value,
+                          task_order: nextValue,
                         })
                       }
-                      className="sibs-filter-input w-full text-xs"
-                    >
-                      <option value="">Select Task Order...</option>
-                      {taskOrderOptions.map((taskOrder) => (
-                        <option key={taskOrder} value={taskOrder}>
-                          {taskOrder}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="Select Task Order..."
+                      searchPlaceholder="Search task orders..."
+                      minWidth={280}
+                      className="w-full"
+                    />
 
                     <input
                       value={getHeroDash(emp)}
@@ -1614,21 +1946,26 @@ export default function SettingsPage() {
                       Active Status
                     </label>
 
-                    <select
+                    <SettingsSelectDropdown
                       value={editingEmployee.status}
-                      onChange={(e) =>
+                      options={[
+                        { value: "Active", label: "Active" },
+                        { value: "Inactive", label: "Inactive" },
+                      ]}
+                      onChange={(nextValue) =>
                         setEditingEmployee({
                           ...editingEmployee,
-                          status: e.target.value,
+                          status: nextValue,
                           employment_status:
-                            e.target.value === "Active" ? "Active" : "Inactive",
+                            nextValue === "Active" ? "Active" : "Inactive",
                         })
                       }
-                      className="sibs-filter-input w-full text-sm font-bold"
-                    >
-                      <option value="Active">Active</option>
-                      <option value="Inactive">Inactive</option>
-                    </select>
+                      placeholder="Select status..."
+                      searchPlaceholder="Search statuses..."
+                      size="medium"
+                      minWidth={220}
+                      className="w-full"
+                    />
                   </div>
 
                   <div>
@@ -1636,26 +1973,30 @@ export default function SettingsPage() {
                       Task Order
                     </label>
 
-                    <select
+                    <SettingsSelectDropdown
                       value={editingEmployee.task_order || ""}
-                      onChange={(e) =>
+                      options={[
+                        { value: "", label: "Select Task Order..." },
+                        ...taskOrderOptions.map((taskOrder) => ({
+                          value: taskOrder,
+                          label: taskOrder,
+                        })),
+                      ]}
+                      onChange={(nextValue) =>
                         setEditingEmployee({
                           ...editingEmployee,
-                          task_order: e.target.value,
-                          assigned_sub_account: e.target.value,
+                          task_order: nextValue,
+                          assigned_sub_account: nextValue,
                           task_order_assigned_at: new Date().toISOString(),
                           sub_account_assigned_at: new Date().toISOString(),
                         })
                       }
-                      className="sibs-filter-input w-full text-sm font-bold"
-                    >
-                      <option value="">Select Task Order...</option>
-                      {taskOrderOptions.map((taskOrder) => (
-                        <option key={taskOrder} value={taskOrder}>
-                          {taskOrder}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="Select Task Order..."
+                      searchPlaceholder="Search task orders..."
+                      size="medium"
+                      minWidth={280}
+                      className="w-full"
+                    />
                   </div>
 
                   <div>
