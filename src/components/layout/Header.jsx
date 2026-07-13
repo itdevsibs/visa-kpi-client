@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -28,13 +34,158 @@ const navItems = [
   },
 ];
 
-function getInitials(name = "") {
-  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+function cleanText(value) {
+  return String(value ?? "").trim();
+}
 
-  if (parts.length === 0) return "AD";
+function getInitials(name = "") {
+  const parts = cleanText(name).split(/\s+/).filter(Boolean);
+
+  if (parts.length === 0) return "US";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
 
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function parseStoredObject(key) {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const rawValue = window.localStorage.getItem(key);
+
+    if (!rawValue) return null;
+
+    const parsedValue = JSON.parse(rawValue);
+
+    return parsedValue && typeof parsedValue === "object"
+      ? parsedValue
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getStoredUser() {
+  const storageKeys = [
+    "user",
+    "currentUser",
+    "authUser",
+    "loggedInUser",
+    "admin",
+    "adminUser",
+    "userData",
+    "profile",
+  ];
+
+  for (const key of storageKeys) {
+    const storedValue = parseStoredObject(key);
+
+    if (storedValue) {
+      return storedValue;
+    }
+  }
+
+  return {};
+}
+
+function getFirstAvailableValue(object, keys = []) {
+  for (const key of keys) {
+    const value = cleanText(object?.[key]);
+
+    if (value) return value;
+  }
+
+  return "";
+}
+
+function buildFullName(user = {}) {
+  const directName = getFirstAvailableValue(user, [
+    "name",
+    "fullName",
+    "full_name",
+    "employeeName",
+    "employee_name",
+    "adminName",
+    "admin_name",
+    "displayName",
+    "display_name",
+    "username",
+    "userName",
+    "user_name",
+  ]);
+
+  if (directName) return directName;
+
+  const firstName = getFirstAvailableValue(user, [
+    "firstName",
+    "first_name",
+    "firstname",
+    "givenName",
+    "given_name",
+    "gy_emp_fname",
+  ]);
+
+  const middleName = getFirstAvailableValue(user, [
+    "middleName",
+    "middle_name",
+    "middlename",
+    "gy_emp_mname",
+  ]);
+
+  const lastName = getFirstAvailableValue(user, [
+    "lastName",
+    "last_name",
+    "lastname",
+    "surname",
+    "familyName",
+    "family_name",
+    "gy_emp_lname",
+  ]);
+
+  return [firstName, middleName, lastName].filter(Boolean).join(" ").trim();
+}
+
+function getDisplayEmail(user = {}) {
+  return getFirstAvailableValue(user, [
+    "email",
+    "employee_email",
+    "employeeEmail",
+    "adminEmail",
+    "admin_email",
+    "userEmail",
+    "user_email",
+    "emailAddress",
+    "email_address",
+  ]);
+}
+
+function getDisplayRole(user = {}) {
+  return (
+    getFirstAvailableValue(user, [
+      "role",
+      "userRole",
+      "user_role",
+      "roleName",
+      "role_name",
+      "adminRole",
+      "admin_role",
+      "position",
+      "jobTitle",
+      "job_title",
+      "designation",
+    ]) || "User"
+  );
+}
+
+function nameFromEmail(email = "") {
+  const emailUsername = cleanText(email).split("@")[0];
+
+  if (!emailUsername) return "";
+
+  return emailUsername
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase())
+    .trim();
 }
 
 function Header() {
@@ -46,35 +197,60 @@ function Header() {
 
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
-  const displayUser = currentUser || user || {};
+  const displayUser = useMemo(() => {
+    const contextUser =
+      currentUser && typeof currentUser === "object"
+        ? currentUser
+        : user && typeof user === "object"
+          ? user
+          : {};
 
-  const displayName =
-    displayUser.name ||
-    displayUser.fullName ||
-    displayUser.employee_name ||
-    "Administrator";
+    const storedUser = getStoredUser();
 
-  const displayEmail =
-    displayUser.email ||
-    displayUser.employee_email ||
-    "administrator@usvisa-kpi.com";
+    return {
+      ...storedUser,
+      ...contextUser,
+    };
+  }, [currentUser, user]);
 
-  const displayRole =
-    displayUser.role ||
-    displayUser.userRole ||
-    "Administrator";
+  const displayEmail = useMemo(() => {
+    return getDisplayEmail(displayUser) || "No email available";
+  }, [displayUser]);
 
-  const initials = getInitials(displayName);
+  const displayName = useMemo(() => {
+    const resolvedName = buildFullName(displayUser);
+
+    if (resolvedName) return resolvedName;
+
+    const emailBasedName = nameFromEmail(displayEmail);
+
+    return emailBasedName || "US Visa User";
+  }, [displayEmail, displayUser]);
+
+  const displayRole = useMemo(() => {
+    return getDisplayRole(displayUser);
+  }, [displayUser]);
+
+  const initials = useMemo(() => {
+    return getInitials(displayName);
+  }, [displayName]);
 
   const activeIndex = useMemo(() => {
-    const pathname = location.pathname === "/" ? "/dashboard" : location.pathname;
+    const pathname =
+      location.pathname === "/" ? "/dashboard" : location.pathname;
+
     const index = navItems.findIndex((item) => item.path === pathname);
 
     return index >= 0 ? index : 0;
   }, [location.pathname]);
 
   const handleLogout = useCallback(() => {
-    logout();
+    setIsProfileOpen(false);
+
+    if (typeof logout === "function") {
+      logout();
+    }
+
     navigate("/login", { replace: true });
   }, [logout, navigate]);
 
@@ -88,26 +264,35 @@ function Header() {
       }
     }
 
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setIsProfileOpen(false);
+      }
+    }
+
     document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
 
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
     };
   }, []);
 
   return (
-    <header className="relative z-[80] h-16 bg-white border-b border-slate-200/60 flex items-center px-3 sm:px-6 shrink-0 gap-3 overflow-visible">
+    <header className="relative z-[1000] flex h-16 shrink-0 items-center gap-3 overflow-visible border-b border-slate-200/60 bg-white px-3 sm:px-6">
       {/* Left: Brand */}
-      <div className="flex h-11 items-center shrink-0 w-12 md:w-64">
+      <div className="flex h-11 w-12 shrink-0 items-center md:w-64">
         <div className="flex h-11 items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 text-xs font-black text-white shadow-md shadow-blue-500/20 border border-blue-500/30">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-500/30 bg-gradient-to-br from-blue-600 to-blue-700 text-xs font-black text-white shadow-md shadow-blue-500/20">
             US
           </div>
 
           <div className="hidden min-w-0 md:block">
-            <h2 className="truncate text-lg font-black uppercase leading-tight tracking-tight text-slate-900">
+            <h2 className="whitespace-nowrap text-lg font-black uppercase leading-tight tracking-tight text-slate-900">
               US Visa Account
             </h2>
+
             <p className="text-[10px] font-mono uppercase leading-tight tracking-wider text-amber-500">
               KPI Engine
             </p>
@@ -117,7 +302,7 @@ function Header() {
 
       {/* Center Navigation */}
       <div className="flex min-w-0 flex-1 justify-center">
-        <nav className="relative grid h-11 grid-cols-3 rounded-2xl border border-slate-200/60 bg-slate-100/80 p-1 shadow-inner shrink-0">
+        <nav className="relative grid h-11 shrink-0 grid-cols-3 rounded-2xl border border-slate-200/60 bg-slate-100/80 p-1 shadow-inner">
           <div
             className="absolute bottom-1 left-1 top-1 rounded-xl bg-blue-600 shadow-md shadow-blue-500/20 transition-transform duration-300 ease-out will-change-transform"
             style={{
@@ -134,6 +319,7 @@ function Header() {
               <Link
                 key={item.path}
                 to={item.path}
+                onClick={() => setIsProfileOpen(false)}
                 className={`relative z-10 flex h-9 min-w-10 items-center justify-center gap-2 rounded-xl px-3 text-xs font-bold transition-colors duration-200 lg:min-w-[180px] ${
                   isActive
                     ? "text-white"
@@ -151,50 +337,73 @@ function Header() {
         </nav>
       </div>
 
-      {/* Right: Profile / Logout */}
-      <div className="flex h-11 justify-end shrink-0 w-12 md:w-64">
-        <div ref={profileMenuRef} className="relative">
+      {/* Right: Profile */}
+      <div className="flex h-11 w-12 shrink-0 justify-end md:w-[330px]">
+        <div
+          ref={profileMenuRef}
+          className="relative flex justify-end"
+        >
           <button
             type="button"
-            onClick={() => setIsProfileOpen((prev) => !prev)}
-            className="flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-2.5 shadow-sm transition-all duration-200 hover:bg-slate-50 hover:shadow-md active:scale-[0.98]"
+            onClick={() => setIsProfileOpen((previous) => !previous)}
+            aria-expanded={isProfileOpen}
+            aria-haspopup="menu"
+            className="flex h-11 w-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-1.5 shadow-sm transition-all duration-200 hover:bg-slate-50 hover:shadow-md active:scale-[0.98] md:w-[330px] md:px-3"
           >
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-black text-white">
               {initials}
             </div>
 
-            <div className="hidden min-w-0 text-left md:block md:max-w-[160px]">
-              <p className="truncate text-xs font-black uppercase leading-tight text-slate-900">
+            <div className="hidden min-w-0 flex-1 text-left md:block">
+              <p
+                title={displayName}
+                className="whitespace-nowrap text-xs font-black uppercase leading-tight text-slate-900"
+              >
                 {displayName}
               </p>
-              <p className="mt-0.5 truncate text-[10px] font-medium leading-tight text-slate-500">
+
+              <p
+                title={displayEmail}
+                className="mt-0.5 whitespace-nowrap text-[10px] font-medium leading-tight text-slate-500"
+              >
                 {displayEmail}
               </p>
             </div>
 
             <ChevronDown
-              className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
+              className={`hidden h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 md:block ${
                 isProfileOpen ? "rotate-180" : ""
               }`}
             />
           </button>
 
           {isProfileOpen && (
-            <div className="fixed left-3 right-3 top-[72px] z-[100] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-72">
+            <div
+              role="menu"
+              className="fixed left-3 right-3 top-[72px] z-[999999] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_50px_rgba(15,23,42,0.22)] md:absolute md:left-auto md:right-0 md:top-full md:mt-2 md:w-[330px]"
+            >
               <div className="border-b border-slate-100 p-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-black text-white">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-black text-white">
                     {initials}
                   </div>
 
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-black uppercase text-slate-900">
+                    <p
+                      title={displayName}
+                      className="whitespace-nowrap text-sm font-black uppercase leading-tight text-slate-900"
+                    >
                       {displayName}
                     </p>
-                    <p className="truncate text-[11px] font-medium text-slate-500">
+
+                    <p
+                      title={displayEmail}
+                      className="mt-1 whitespace-nowrap text-[11px] font-medium text-slate-500"
+                    >
                       {displayEmail}
                     </p>
-                    <p className="mt-0.5 truncate text-[10px] font-bold uppercase tracking-wider text-blue-600">
+
+                    <p className="mt-1 whitespace-nowrap text-[10px] font-bold uppercase tracking-wider text-blue-600">
                       {displayRole}
                     </p>
                   </div>
@@ -204,10 +413,11 @@ function Header() {
               <div className="p-2">
                 <button
                   type="button"
+                  role="menuitem"
                   onClick={handleLogout}
                   className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-bold text-red-600 transition-colors hover:bg-red-50"
                 >
-                  <LogOut className="h-4 w-4" />
+                  <LogOut className="h-4 w-4 shrink-0" />
                   <span>Logout</span>
                 </button>
               </div>
