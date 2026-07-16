@@ -1,17 +1,13 @@
 /**
- * Formats a given number of seconds into a HH:MM:SS string
+ * Formats a duration as a safe, rounded number of seconds.
  */
 export const formatSeconds = (seconds) => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
+  const numericValue = Number(seconds);
+  const safeSeconds = Number.isFinite(numericValue)
+    ? Math.max(0, Math.round(numericValue))
+    : 0;
 
-  const pad = (num) => num.toString().padStart(2, "0");
-
-  if (h > 0) {
-    return `${pad(h)}:${pad(m)}:${pad(s)}`;
-  }
-  return `${pad(m)}:${pad(s)}`;
+  return `${safeSeconds.toLocaleString("en-US")}s`;
 };
 
 /**
@@ -27,7 +23,7 @@ export const calculatePercentage = (actual, target) => {
  */
 export const getPerformanceColor = (actual, target, isLowerBetter = false) => {
   const percentage = calculatePercentage(actual, target);
-  
+
   if (isLowerBetter) {
     if (percentage <= 100) return "text-green-600";
     if (percentage <= 110) return "text-amber-600";

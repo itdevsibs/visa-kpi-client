@@ -4,7 +4,7 @@ import { useRoster } from "../../../services/context/RosterContext.jsx";
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, {
+import {
   useCallback,
   useDeferredValue,
   useEffect,
@@ -21,7 +21,6 @@ import {
   Search,
   ChevronDown,
   ChevronUp,
-  Download,
   FileSpreadsheet,
   Printer,
   Calendar,
@@ -38,6 +37,11 @@ import { PerformanceStatsBar } from "./PerformanceStatsBar.jsx";
 import LazyChartMount from "../../../components/ui/LazyChartMount.jsx";
 import { useDebounce } from "../../../hooks/useDebounce.js";
 import { apiGet } from "../../../lib/axios/api.js";
+import {
+  KPI_HEADERS,
+  KPI_HEADER_LINES,
+} from "../../../constants/kpiHeaders.js";
+import { formatSeconds } from "../../../lib/utils/formatters.js";
 import {
   LineChart,
   Line,
@@ -179,14 +183,6 @@ function normalizeRecord(record = {}) {
 function formatHourLabel(hour) {
   const option = START_HOURS.find((item) => item.value === Number(hour));
   return option?.label || `${String(hour).padStart(2, "0")}:00`;
-}
-
-function formatSeconds(seconds = 0) {
-  const safeSeconds = Number.isFinite(Number(seconds)) ? Number(seconds) : 0;
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-
-  return `${hours}h ${minutes}m`;
 }
 
 function DashboardDropdownPortal({
@@ -1109,7 +1105,7 @@ export default function PerformancePage() {
           getApiRows(hourlyResponse).map(normalizeRecord).map((record) => ({
             hour: formatHourLabel(record.hour),
             calls: record.handledCalls,
-            logged: Math.round((record.loggedSeconds / 60) * 10) / 10,
+            logged: Math.round(record.loggedSeconds),
             emails: record.actualEmails,
             efficiency: record.efficiency,
           })),
@@ -1134,21 +1130,21 @@ export default function PerformancePage() {
 
   const handleExport = useCallback(() => {
     const headers = [
-      "Employee",
+      KPI_HEADERS.name,
       "Email",
-      "Interval",
-      "Expected Seconds",
-      "Logged Seconds",
-      "Handled Calls",
-      "Average Talk Seconds",
-      "Average Hold Seconds",
-      "Available Seconds",
-      "Phone Occupancy Percent",
-      "Email Capacity",
-      "Target Emails",
-      "Actual Emails",
-      "Email Utilization Percent",
-      "Efficiency Percent",
+      KPI_HEADERS.interval,
+      KPI_HEADERS.expectedHours,
+      KPI_HEADERS.actualLoggedTime,
+      KPI_HEADERS.handledCalls,
+      KPI_HEADERS.avgTalkTime,
+      KPI_HEADERS.avgHoldTime,
+      KPI_HEADERS.availTime,
+      KPI_HEADERS.phoneOccupancy,
+      KPI_HEADERS.availableEmailCapacity,
+      KPI_HEADERS.targetEmails,
+      KPI_HEADERS.actualEmails,
+      KPI_HEADERS.emailUtilization,
+      KPI_HEADERS.actualEfficiency,
     ];
     const rows = sortedData.map((row) => [
       row.employeeName,
@@ -1382,33 +1378,39 @@ export default function PerformancePage() {
       </div>
 
       <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:block">
-        <div className="relative max-h-[500px] overflow-x-auto overflow-y-auto">
-          <table className="min-w-[1500px] table-fixed border-collapse text-left text-[13px]">
+        <div className="relative w-full max-h-[500px] overflow-x-auto overflow-y-auto">
+          <table className="w-full min-w-[1320px] table-fixed border-collapse text-left text-[13px]">
             <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500">
               <tr>
                 {[
-                  ["employeeName", "Employee", 210],
-                  ["hour", "Interval", 100],
-                  ["expectedSeconds", "Expected", 120],
-                  ["loggedSeconds", "Logged", 120],
-                  ["handledCalls", "Calls", 90],
-                  ["avgTalkTime", "Avg Talk", 105],
-                  ["avgHoldTime", "Avg Hold", 105],
-                  ["availableSeconds", "Available", 115],
-                  ["phoneOccupancy", "Occupancy", 115],
-                  ["availableEmailCapacity", "Email Capacity", 130],
-                  ["targetEmails", "Target Emails", 110],
-                  ["actualEmails", "Actual Emails", 110],
-                  ["emailUtilization", "Email Util", 110],
-                  ["efficiency", "Efficiency", 110],
-                ].map(([column, label, width]) => (
-                  <th key={column} className="p-3" style={{ width }}>
+                  ["employeeName", KPI_HEADER_LINES.name, 190],
+                  ["hour", KPI_HEADER_LINES.interval, 82],
+                  ["expectedSeconds", KPI_HEADER_LINES.expectedHours, 92],
+                  ["loggedSeconds", KPI_HEADER_LINES.actualLoggedTime, 100],
+                  ["handledCalls", KPI_HEADER_LINES.handledCalls, 78],
+                  ["avgTalkTime", KPI_HEADER_LINES.avgTalkTime, 88],
+                  ["avgHoldTime", KPI_HEADER_LINES.avgHoldTime, 88],
+                  ["availableSeconds", KPI_HEADER_LINES.availTime, 88],
+                  ["phoneOccupancy", KPI_HEADER_LINES.phoneOccupancy, 88],
+                  ["availableEmailCapacity", KPI_HEADER_LINES.availableEmailCapacity, 112],
+                  ["targetEmails", KPI_HEADER_LINES.targetEmails, 88],
+                  ["actualEmails", KPI_HEADER_LINES.actualEmails, 108],
+                  ["emailUtilization", KPI_HEADER_LINES.emailUtilization, 88],
+                  ["efficiency", KPI_HEADER_LINES.actualEfficiency, 88],
+                ].map(([column, labelLines, width]) => (
+                  <th key={column} className="px-2.5 py-3" style={{ width }}>
                     <button
                       type="button"
                       onClick={() => handleSort(column)}
-                      className="flex w-full items-center gap-1.5 text-left uppercase hover:text-slate-900"
+                      className="flex w-full items-center justify-between gap-1 text-left uppercase hover:text-slate-900"
                     >
-                      <span className="truncate">{label}</span>
+                      <span className="flex min-w-0 flex-col leading-[1.15]">
+                        {labelLines.map((line) => (
+                          <span key={line} className="block whitespace-nowrap">
+                            {line}
+                          </span>
+                        ))}
+                      </span>
                       {sortColumn === column ? (
                         sortDirection === "asc" ? (
                           <ChevronUp className="h-3.5 w-3.5 text-blue-500" />
@@ -1478,8 +1480,8 @@ export default function PerformancePage() {
                       <td className="p-3 font-bold text-slate-900">
                         {row.handledCalls}
                       </td>
-                      <td className="p-3">{row.avgTalkTime}s</td>
-                      <td className="p-3">{row.avgHoldTime}s</td>
+                      <td className="p-3">{formatSeconds(row.avgTalkTime)}</td>
+                      <td className="p-3">{formatSeconds(row.avgHoldTime)}</td>
                       <td className="p-3">
                         {formatSeconds(row.availableSeconds)}
                       </td>
@@ -1600,10 +1602,10 @@ export default function PerformancePage() {
             <div className="flex-1 space-y-6 overflow-y-auto p-6">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
-                  ["Logged Time", formatSeconds(selectedRowEmployee.loggedSeconds)],
-                  ["Handled Calls", selectedRowEmployee.handledCalls],
-                  ["Average Talk", `${selectedRowEmployee.avgTalkTime}s`],
-                  ["Efficiency", `${selectedRowEmployee.efficiency}%`],
+                  [KPI_HEADERS.actualLoggedTime, formatSeconds(selectedRowEmployee.loggedSeconds)],
+                  [KPI_HEADERS.handledCalls, selectedRowEmployee.handledCalls],
+                  [KPI_HEADERS.avgTalkTime, formatSeconds(selectedRowEmployee.avgTalkTime)],
+                  [KPI_HEADERS.actualEfficiency, `${selectedRowEmployee.efficiency}%`],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
@@ -1625,7 +1627,7 @@ export default function PerformancePage() {
                 <>
                   <div>
                     <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                      Hourly Calls and Emails
+                      Hourly {KPI_HEADERS.handledCalls} and {KPI_HEADERS.actualEmails}
                     </h4>
                     <LazyChartMount heightClass="h-56" className="sibs-chart-container">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1645,7 +1647,7 @@ export default function PerformancePage() {
 
                   <div>
                     <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                      Hourly Efficiency
+                      Hourly {KPI_HEADERS.actualEfficiency}
                     </h4>
                     <LazyChartMount heightClass="h-56" className="sibs-chart-container">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1676,7 +1678,7 @@ export default function PerformancePage() {
                               {history.date}
                             </span>
                             <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
-                              <span>Calls: <strong>{history.calls}</strong></span>
+                              <span>{KPI_HEADERS.handledCalls}: <strong>{history.calls}</strong></span>
                               <span>Emails: <strong>{history.emails}</strong></span>
                               <span>Occupancy: <strong>{history.occupancy}%</strong></span>
                               <span className="font-black text-slate-900">{history.efficiency}%</span>

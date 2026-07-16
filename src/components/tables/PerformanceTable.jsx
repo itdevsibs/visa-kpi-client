@@ -1,6 +1,10 @@
-import React from "react";
 import { usePagination } from "../../hooks/usePagination";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  KPI_HEADERS,
+  KPI_HEADER_LINES,
+} from "../../constants/kpiHeaders.js";
+import { formatSeconds } from "../../lib/utils/formatters.js";
 
 export const PerformanceTable = ({ data }) => {
   const { currentPage, totalPages, paginatedData, nextPage, prevPage, goToPage } = usePagination(data, 10);
@@ -11,11 +15,17 @@ export const PerformanceTable = ({ data }) => {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
-              <th className="px-4 py-3 font-semibold">Employee</th>
+              <th className="px-4 py-3 font-semibold">{KPI_HEADERS.name}</th>
               <th className="px-4 py-3 font-semibold">Role</th>
-              <th className="px-4 py-3 font-semibold">Logged Time</th>
-              <th className="px-4 py-3 font-semibold">Calls (Act/Tgt)</th>
-              <th className="px-4 py-3 font-semibold">Efficiency</th>
+              <th className="px-4 py-3 font-semibold">
+                <span className="flex flex-col leading-tight">
+                  {KPI_HEADER_LINES.actualLoggedTime.map((line) => (
+                    <span key={line}>{line}</span>
+                  ))}
+                </span>
+              </th>
+              <th className="px-4 py-3 font-semibold">{KPI_HEADERS.handledCalls} (Act/Tgt)</th>
+              <th className="px-4 py-3 font-semibold">{KPI_HEADERS.actualEfficiency}</th>
               <th className="px-4 py-3 font-semibold text-right">Actions</th>
             </tr>
           </thead>
@@ -35,8 +45,12 @@ export const PerformanceTable = ({ data }) => {
                   </td>
                   <td className="px-4 py-3 text-slate-600">{emp.role}</td>
                   <td className="px-4 py-3">
-                    <div className="text-slate-800">{Math.floor(emp.actualLoggedTime / 3600)}h {Math.floor((emp.actualLoggedTime % 3600) / 60)}m</div>
-                    <div className="text-xs text-slate-500">Target: {emp.expectedHours}h</div>
+                    <div className="text-slate-800">{formatSeconds(emp.actualLoggedTime)}</div>
+                    <div className="text-xs text-slate-500">
+                      Target: {formatSeconds(
+                        emp.expectedSeconds ?? Number(emp.expectedHours || 0) * 3600,
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="text-slate-800">{emp.handledCalls}</div>

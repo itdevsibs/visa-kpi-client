@@ -1,5 +1,6 @@
 import React from "react";
 import { User, Award, Activity, Phone, Mail } from "lucide-react";
+import { KPI_HEADERS } from "../../../constants/kpiHeaders.js";
 
 const statCards = [
   {
@@ -11,28 +12,28 @@ const statCards = [
   },
   {
     key: "avgEff",
-    label: "Avg Efficiency",
+    label: KPI_HEADERS.actualEfficiency,
     icon: Award,
     iconClass: "bg-amber-50 text-amber-600",
     suffix: "%",
   },
   {
     key: "avgOccupancy",
-    label: "Phone Occupancy",
+    label: KPI_HEADERS.phoneOccupancy,
     icon: Activity,
     iconClass: "bg-sky-50 text-sky-600",
     suffix: "%",
   },
   {
     key: "totalCalls",
-    label: "Total Calls",
+    label: KPI_HEADERS.handledCalls,
     icon: Phone,
     iconClass: "bg-emerald-50 text-emerald-600",
     suffix: "",
   },
   {
     key: "totalEmails",
-    label: "Total Emails",
+    label: KPI_HEADERS.actualEmails,
     icon: Mail,
     iconClass: "bg-indigo-50 text-indigo-600",
     suffix: "",
@@ -50,7 +51,9 @@ function StatCard({ card, value }) {
         </div>
 
         <div className="min-w-0 flex-1">
-          <p className="sibs-section-label truncate">{card.label}</p>
+          <p className="sibs-section-label line-clamp-2 min-h-[2rem] leading-tight">
+            {card.label}
+          </p>
           <p className="sibs-metric-value mt-0.5 truncate text-2xl">
             {value}
             {card.suffix}
