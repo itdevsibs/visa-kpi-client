@@ -61,6 +61,8 @@ import {
 import { AnimatedNumber } from "../../components/ui/motion.jsx";
 import LazyChartMount from "../../components/ui/LazyChartMount.jsx";
 import { apiGet } from "../../lib/axios/api.js";
+import { KPI_HEADERS } from "../../constants/kpiHeaders.js";
+import { formatSeconds } from "../../lib/utils/formatters.js";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => ({
   value: hour,
@@ -1323,8 +1325,8 @@ export default function DashboardPage() {
       data.push({
         hour: hourOption?.label || `${String(hour).padStart(2, "0")}:00`,
         hourValue: hour,
-        "Expected Hours": Math.round((expectedSeconds / 3600) * 100) / 100,
-        "Logged Time": Math.round((loggedSeconds / 3600) * 100) / 100,
+        "Expected Seconds": Math.round(expectedSeconds),
+        "Logged Time": Math.round(loggedSeconds),
         "Calls Actual": handledCalls,
         "Calls Target": Math.round((expectedSeconds / 3600) * 5),
         "Avg Talk Time (s)": avgTalkTime,
@@ -1345,8 +1347,8 @@ export default function DashboardPage() {
     if (dailyRecords.length === 0) {
       return {
         loggedTime: 0,
-        expectedHours: 0,
-        loggedFormatted: "0h 0m",
+        expectedSeconds: 0,
+        loggedFormatted: "0s",
         loggedAchievement: 0,
         handledCalls: 0,
         callsTarget: 0,
@@ -1401,8 +1403,6 @@ export default function DashboardPage() {
       actualEmails += record.actualEmails;
     });
 
-    const loggedHours = Math.floor(totalLoggedSeconds / 3600);
-    const loggedMinutes = Math.floor((totalLoggedSeconds % 3600) / 60);
     const avgTalkTime =
       totalHandledCalls > 0
         ? Math.round(weightedTalkSeconds / totalHandledCalls)
@@ -1427,8 +1427,8 @@ export default function DashboardPage() {
 
     return {
       loggedTime: totalLoggedSeconds,
-      expectedHours: Math.round((totalExpectedSeconds / 3600) * 100) / 100,
-      loggedFormatted: `${loggedHours}h ${loggedMinutes}m`,
+      expectedSeconds: Math.round(totalExpectedSeconds),
+      loggedFormatted: formatSeconds(totalLoggedSeconds),
       loggedAchievement:
         totalExpectedSeconds > 0
           ? Math.round((totalLoggedSeconds / totalExpectedSeconds) * 100)
@@ -1637,17 +1637,17 @@ export default function DashboardPage() {
       `Employees: ${selectedEmployeeName}`,
       "Source: matched us_visa_kpi_employees and us_visa_kpi_hourly_summary records",
       "",
-      `Actual Logged Time: ${summaryMetrics.loggedFormatted}`,
+      `${KPI_HEADERS.actualLoggedTime}: ${summaryMetrics.loggedFormatted}`,
       `Logged Achievement: ${formatMetric(summaryMetrics.loggedAchievement)}%`,
-      `Handled Calls: ${formatMetric(summaryMetrics.handledCalls)}`,
-      `Average Talk Time: ${formatMetric(summaryMetrics.avgTalkTime)}s`,
-      `Average Hold Time: ${formatMetric(summaryMetrics.avgHoldTime)}s`,
-      `Phone Occupancy: ${formatMetric(summaryMetrics.phoneOccupancy)}%`,
-      `Available Email Capacity: ${formatMetric(summaryMetrics.availableEmailCapacity)}`,
-      `Actual Emails: ${formatMetric(summaryMetrics.actualEmails)}`,
-      `Target Emails: ${formatMetric(summaryMetrics.targetEmails)}`,
-      `Email Utilization: ${formatMetric(summaryMetrics.emailUtilization)}%`,
-      `Actual Efficiency: ${formatMetric(summaryMetrics.actualEfficiency)}%`,
+      `${KPI_HEADERS.handledCalls}: ${formatMetric(summaryMetrics.handledCalls)}`,
+      `${KPI_HEADERS.avgTalkTime}: ${formatSeconds(summaryMetrics.avgTalkTime)}`,
+      `${KPI_HEADERS.avgHoldTime}: ${formatSeconds(summaryMetrics.avgHoldTime)}`,
+      `${KPI_HEADERS.phoneOccupancy}: ${formatMetric(summaryMetrics.phoneOccupancy)}%`,
+      `${KPI_HEADERS.availableEmailCapacity}: ${formatMetric(summaryMetrics.availableEmailCapacity)}`,
+      `${KPI_HEADERS.actualEmails}: ${formatMetric(summaryMetrics.actualEmails)}`,
+      `${KPI_HEADERS.targetEmails}: ${formatMetric(summaryMetrics.targetEmails)}`,
+      `${KPI_HEADERS.emailUtilization}: ${formatMetric(summaryMetrics.emailUtilization)}%`,
+      `${KPI_HEADERS.actualEfficiency}: ${formatMetric(summaryMetrics.actualEfficiency)}%`,
     ];
 
     const extension = format === "Excel" ? "csv" : "txt";
@@ -1873,12 +1873,12 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="mt-3 min-w-0 flex-1">
-              <h3 className="sibs-section-label truncate">Actual Logged Time</h3>
+              <h3 className="sibs-section-label line-clamp-2 min-h-[2rem] leading-tight">{KPI_HEADERS.actualLoggedTime}</h3>
               <p className="sibs-metric-value text-2xl truncate">
                 {summaryMetrics.loggedFormatted}
               </p>
               <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
-                <span className="truncate">Target: {summaryMetrics.expectedHours}h</span>
+                <span className="truncate">Target: {formatSeconds(summaryMetrics.expectedSeconds)}</span>
                 {renderTrend(summaryMetrics.trends?.loggedTime ?? 0)}
               </div>
             </div>
@@ -1910,7 +1910,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Handled Calls</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.handledCalls}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
               <AnimatedNumber value={summaryMetrics.handledCalls} /> Calls
             </p>
@@ -1947,12 +1947,12 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Average Talk Time</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.avgTalkTime}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
-              {summaryMetrics.avgTalkTime}s
+              {formatSeconds(summaryMetrics.avgTalkTime)}
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
-              <span className="truncate">Target: {summaryMetrics.talkTarget}s</span>
+              <span className="truncate">Target: {formatSeconds(summaryMetrics.talkTarget)}</span>
               {renderTrend(summaryMetrics.trends?.avgTalkTime ?? 0, true)}
             </div>
           </div>
@@ -1984,12 +1984,12 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Average Hold Time</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.avgHoldTime}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
-              {summaryMetrics.avgHoldTime}s
+              {formatSeconds(summaryMetrics.avgHoldTime)}
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
-              <span className="truncate">Target: {summaryMetrics.holdTarget}s</span>
+              <span className="truncate">Target: {formatSeconds(summaryMetrics.holdTarget)}</span>
               {renderTrend(summaryMetrics.trends?.avgHoldTime ?? 0, true)}
             </div>
           </div>
@@ -2021,7 +2021,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Phone Occupancy</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.phoneOccupancy}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
               {formatMetric(summaryMetrics.phoneOccupancy)}%
             </p>
@@ -2058,7 +2058,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Available Email Capacity</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.availableEmailCapacity}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
               <AnimatedNumber value={summaryMetrics.availableEmailCapacity} /> Emails
             </p>
@@ -2095,7 +2095,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Email Utilization</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.emailUtilization}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
               {summaryMetrics.actualEmails} / {summaryMetrics.targetEmails}
             </p>
@@ -2132,7 +2132,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Actual Efficiency</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.actualEfficiency}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
               {formatMetric(summaryMetrics.actualEfficiency)}%
             </p>
@@ -2165,7 +2165,7 @@ export default function DashboardPage() {
           <div className="sibs-chart-container">
             <h3 className="text-sm font-semibold text-slate-800 mb-4 font-sans flex items-center gap-1.5">
               <Clock className="h-4 w-4 text-blue-500" />
-              Actual Logged Time vs Expected Hours (Hours)
+              {KPI_HEADERS.actualLoggedTime} vs {KPI_HEADERS.expectedHours}
             </h3>
             <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -2209,7 +2209,7 @@ export default function DashboardPage() {
                   fontFamily: 'sans-serif',
                   color: '#fff'
                 }} />
-                  <Area type="monotone" dataKey="Expected Hours" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="4 4" fillOpacity={1} fill="url(#expectedColor)" />
+                  <Area type="monotone" dataKey="Expected Seconds" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="4 4" fillOpacity={1} fill="url(#expectedColor)" />
                   <Area type="monotone" dataKey="Logged Time" stroke="#2563eb" strokeWidth={2.5} fillOpacity={1} fill="url(#loggedColor)" dot={{ r: 4, strokeWidth: 2 }}>
                     <LabelList dataKey="Logged Time" position="top" offset={10} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#2563eb' }} />
                   </Area>
@@ -2222,7 +2222,7 @@ export default function DashboardPage() {
           <div className="sibs-chart-container">
             <h3 className="text-sm font-semibold text-slate-800 mb-4 font-sans flex items-center gap-1.5">
               <Phone className="h-4 w-4 text-emerald-500" />
-              Handled Calls (Actual vs Target)
+              {KPI_HEADERS.handledCalls} (Actual vs Target)
             </h3>
             <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -2282,7 +2282,7 @@ export default function DashboardPage() {
           <div className="sibs-chart-container">
             <h3 className="text-sm font-semibold text-slate-800 mb-4 font-sans flex items-center gap-1.5">
               <Zap className="h-4 w-4 text-violet-500" />
-              Average Talk Time vs Average Hold Time (Seconds)
+              {KPI_HEADERS.avgTalkTime} vs {KPI_HEADERS.avgHoldTime} (Seconds)
             </h3>
             <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -2340,7 +2340,7 @@ export default function DashboardPage() {
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
             <h3 className="text-sm font-semibold text-slate-800 mb-2 font-sans flex items-center gap-1.5">
               <Percent className="h-4 w-4 text-sky-500" />
-              Phone Occupancy State Allocation
+              {KPI_HEADERS.phoneOccupancy} State Allocation
             </h3>
             <div className="relative flex items-center justify-center h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -2446,7 +2446,7 @@ export default function DashboardPage() {
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between group/gauge">
             <h3 className="text-sm font-semibold text-slate-800 mb-2 font-sans flex items-center gap-1.5">
               <Award className="h-4 w-4 text-amber-500" />
-              Actual Productive Efficiency
+              {KPI_HEADERS.actualEfficiency}
             </h3>
             <div className="flex flex-col items-center justify-center pt-2 pb-2 w-full">
               {(() => {

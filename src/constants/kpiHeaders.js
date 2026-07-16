@@ -1,0 +1,33 @@
+export const KPI_HEADERS = Object.freeze({
+  name: "Name",
+  interval: "Interval",
+  expectedHours: "Expected Hours(sec)",
+  actualLoggedTime: "Actual Logged Time",
+  handledCalls: "Handled Calls",
+  avgTalkTime: "AVG Talk Time",
+  avgHoldTime: "AVG Hold Time",
+  availTime: "Avail Time",
+  phoneOccupancy: "Phone Occupancy",
+  availableEmailCapacity: "Available Email Capacity (email)",
+  targetEmails: "Target # of Emails",
+  actualEmails: "Actual # of Emails (Email/Hour)",
+  emailUtilization: "Utilization (Email)",
+  actualEfficiency: "Actual Efficiency",
+});
+
+export const KPI_HEADER_LINES = Object.freeze({
+  name: ["Name"],
+  interval: ["Interval"],
+  expectedHours: ["Expected Hours", "(sec)"],
+  actualLoggedTime: ["Actual Logged", "Time"],
+  handledCalls: ["Handled", "Calls"],
+  avgTalkTime: ["AVG Talk", "Time"],
+  avgHoldTime: ["AVG Hold", "Time"],
+  availTime: ["Avail", "Time"],
+  phoneOccupancy: ["Phone", "Occupancy"],
+  availableEmailCapacity: ["Available Email", "Capacity (email)"],
+  targetEmails: ["Target # of", "Emails"],
+  actualEmails: ["Actual # of Emails", "(Email/Hour)"],
+  emailUtilization: ["Utilization", "(Email)"],
+  actualEfficiency: ["Actual", "Efficiency"],
+});
