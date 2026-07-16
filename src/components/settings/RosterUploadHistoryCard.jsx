@@ -9,7 +9,7 @@ export default function RosterUploadHistoryCard({
   userRole,
   uploadLogs,
   onUploadComplete,
-}) {
+}) { 
   return (
     <div className="sibs-card sibs-page-card-in overflow-hidden">
       {/* Card Header */}

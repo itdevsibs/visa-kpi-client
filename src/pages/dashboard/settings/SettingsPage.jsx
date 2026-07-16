@@ -8,8 +8,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "../../../components/ui/button.jsx";
 
 import {
-  Search,
-  Settings,
+  AlertCircle,
+  CheckCircle2,
+  Database,
+  RefreshCw,
+  RotateCcw,
   Save,
   Edit2,
   History,
@@ -39,8 +42,9 @@ import RosterUploadHistoryCard from "../../../components/settings/RosterUploadHi
 
 const DEFAULT_TASK_ORDER_OPTIONS = [
   "GSS 2.0 TO10 - SEASIA",
-  "GSS 2.0 TO11 - SEASIA",
-  "GSS 2.0 TO12 - SEASIA",
+  "GSS 2.0 TO12 - NICE",
+  "GSS 2.0 TO14 - NESAMI",
+  "GSS 2.0 TO16 - SEURECA",
 ];
 
 
@@ -152,91 +156,118 @@ export default function SettingsPage() {
     return accountName.includes("us visa");
   };
 
-  const getTaskOrder = (emp) => {
-    return emp.task_order || emp.assigned_sub_account || "";
-  };
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+            {label}
+          </p>
+          <p className="mt-2 text-2xl font-black tracking-tight text-slate-900">
+            {value}
+          </p>
+          <p className="mt-1 text-xs font-medium text-slate-500">
+            {description}
+          </p>
+        </div>
 
-  const getHeroDash = (emp) => {
-    return emp.herodash || emp.heroDash || emp.hero_dash || "";
-  };
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${tones[tone]}`}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  const getMsd = (emp) => {
-    return emp.msd || emp.MSD || "";
-  };
+function MessageBanner({ type = "success", children, onClose }) {
+  const isError = type === "error";
 
   const getDisplaySibId = (emp) => {
     return emp.employee_id || emp.employee_number || "Unassigned";
   };
 
-  const taskOrderOptions = useMemo(() => {
-    const set = new Set(DEFAULT_TASK_ORDER_OPTIONS);
+function TaskOrderField({ employee, taskOrderOptions, disabled, onChange }) {
+  const listId = `task-orders-${employee.sibsId.replace(/[^a-z0-9]/gi, "-")}`;
 
-    (employees || []).forEach((emp) => {
-      const currentTaskOrder = getTaskOrder(emp);
+  return (
+    <div className="min-w-[240px]">
+      <input
+        list={listId}
+        value={employee.taskOrder}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        placeholder="Select or type Task Order"
+        className={INPUT_CLASS}
+      />
+      <datalist id={listId}>
+        {taskOrderOptions.map((taskOrder) => (
+          <option key={taskOrder} value={taskOrder} />
+        ))}
+      </datalist>
+    </div>
+  );
+}
 
-      if (currentTaskOrder) {
-        set.add(currentTaskOrder);
-      }
-    });
+function LoadingState() {
+  return (
+    <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white">
+      <RefreshCw className="h-8 w-8 animate-spin text-[#0D4676]" />
+      <div className="text-center">
+        <p className="text-sm font-extrabold text-slate-800">
+          Loading employee assignments
+        </p>
+        <p className="mt-1 text-xs font-medium text-slate-500">
+          Retrieving the current active US Visa roster directly from Kronos.
+        </p>
+      </div>
+    </div>
+  );
+}
 
-    return Array.from(set);
-  }, [employees]);
+export default function SettingsPage() {
+  const { user } = useUser();
+  const hasAdminAccess = isAdministrator(user);
 
-  const handleRosterUploadComplete = (payload = {}) => {
-    const newUploadLog = {
-      id: `upload_${Date.now()}`,
-      fileName: payload.fileName || "Roster Upload",
-      uploadedBy: payload.uploadedBy || "Administrator",
-      timestamp:
-        payload.timestamp ||
-        new Date().toLocaleString([], {
-          year: "numeric",
-          month: "short",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
+  const [originalEmployees, setOriginalEmployees] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [completenessFilter, setCompletenessFilter] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  const applyEmployeeRows = useCallback((rows) => {
+    const normalizedRows = (Array.isArray(rows) ? rows : [])
+      .map(normalizeEmployeeAssignment)
+      .filter((employee) => employee.sibsId && employee.agentName)
+      .sort((a, b) =>
+        a.agentName.localeCompare(b.agentName, undefined, {
+          sensitivity: "base",
+          numeric: true,
         }),
-      status: payload.status || "Success",
-      records: payload.records ?? 0,
-      added: payload.added ?? 0,
-      updated: payload.updated ?? 0,
-      skipped: payload.skipped ?? 0,
-    };
-
-    setUploadLogs((prev) => [newUploadLog, ...prev]);
-    handleToast(`Roster import logged: ${newUploadLog.fileName}`);
-  };
-
-  const handleFetchEmployees = () => {
-    if (!hasAdminAccess) {
-      handleToast(
-        "Access Denied: Only Administrators can trigger HRIS synchronization."
       );
-      return;
-    }
 
-    setIsSyncing(true);
+    setOriginalEmployees(normalizedRows);
+    setEmployees(normalizedRows.map((employee) => ({ ...employee })));
+  }, []);
 
-    setTimeout(() => {
-      setEmployees((prevEmployees) => {
-        const updated = [...(prevEmployees || [])].map((emp) => {
-          if (!isUsVisaEmployee(emp)) return emp;
+  const loadAssignments = useCallback(async () => {
+    setLoading(true);
+    setMessage(null);
 
-          return {
-            ...emp,
-            account_name: "US Visa",
-            updated_at: new Date().toISOString(),
-            last_synced_at: new Date().toISOString(),
-            include_dashboard: emp.include_dashboard ?? true,
-            include_reports: emp.include_reports ?? true,
-            kpi_tracking_enabled: emp.kpi_tracking_enabled ?? true,
-            task_order: emp.task_order || emp.assigned_sub_account || "",
-            herodash: getHeroDash(emp),
-            msd: getMsd(emp),
-          };
-        });
-
-        return updated;
+    try {
+      const rows = await getEmployeeAssignments();
+      applyEmployeeRows(rows);
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error?.response?.data?.message ||
+          error?.message ||
+          "Unable to load employee assignments.",
       });
 
       const newLog = {
@@ -338,78 +369,13 @@ export default function SettingsPage() {
       event.target.value = "";
       return;
     }
+  }, [applyEmployeeRows]);
 
-    const reader = new FileReader();
-
-    reader.onload = (readerEvent) => {
-      try {
-        const arrayBuffer = readerEvent.target?.result;
-
-        const workbook = XLSX.read(arrayBuffer, {
-          type: "array",
-        });
-
-        const firstSheetName = workbook.SheetNames[0];
-
-        if (!firstSheetName) {
-          handleToast("No worksheet found in this import file.");
-          return;
-        }
-
-        const worksheet = workbook.Sheets[firstSheetName];
-
-        const rows = XLSX.utils.sheet_to_json(worksheet, {
-          defval: "",
-          raw: false,
-        });
-
-        if (!rows.length) {
-          handleToast("No task order rows found in the file.");
-          return;
-        }
-
-        let updatedCount = 0;
-        let skippedCount = 0;
-
-        setEmployees((prevEmployees) => {
-          const updatedEmployees = [...(prevEmployees || [])];
-
-          rows.forEach((row) => {
-            const sibId = findValue(row, [
-              "SIB ID",
-              "SIB-ID",
-              "SIB_ID",
-              "employee_id",
-              "employee id",
-              "employee_number",
-              "employee number",
-              "id",
-            ]);
-
-            const agentName = findValue(row, [
-              "Agent Name",
-              "agent_name",
-              "employee_name",
-              "employee name",
-              "name",
-              "full name",
-            ]);
-
-            const taskOrder = findValue(row, [
-              "Task Order",
-              "task_order",
-              "taskorder",
-              "assigned task order",
-            ]);
-
-            const herodash = findValue(row, [
-              "HeroDash",
-              "hero_dash",
-              "hero dash",
-              "herodash queue",
-            ]);
-
-            const msd = findValue(row, ["MSD", "msd", "msd queue"]);
+  useEffect(() => {
+    // The callback performs the initial API synchronization for this page.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadAssignments();
+  }, [loadAssignments]);
 
             if (!sibId && !agentName) {
               skippedCount++;
@@ -631,62 +597,32 @@ export default function SettingsPage() {
     });
   }, [employees, searchQuery, selectedStatusFilter]);
 
-  const sortedEmployees = useMemo(() => {
-    const sorted = [...filteredEmployees];
+  const stats = useMemo(() => getAssignmentStats(employees), [employees]);
 
-    sorted.sort((a, b) => {
-      let aVal = "";
-      let bVal = "";
+  const visibleEmployees = useMemo(
+    () =>
+      filterEmployeeAssignments(
+        employees,
+        searchQuery,
+        completenessFilter,
+      ),
+    [completenessFilter, employees, searchQuery],
+  );
 
-      if (sortField === "employee_name") {
-        aVal = String(a.employee_name || "");
-        bVal = String(b.employee_name || "");
-      } else if (sortField === "task_order") {
-        aVal = String(getTaskOrder(a));
-        bVal = String(getTaskOrder(b));
-      } else {
-        aVal = String(a[sortField] || "");
-        bVal = String(b[sortField] || "");
-      }
+  const taskOrderOptions = useMemo(() => {
+    const options = new Set(DEFAULT_TASK_ORDERS);
 
-      return sortOrder === "asc"
-        ? aVal.localeCompare(bVal)
-        : bVal.localeCompare(aVal);
+    employees.forEach((employee) => {
+      if (employee.taskOrder) options.add(employee.taskOrder);
     });
 
-    return sorted;
-  }, [filteredEmployees, sortField, sortOrder]);
-
-  const paginatedEmployees = useMemo(() => {
-    const start = (managementPage - 1) * managementPageSize;
-    return sortedEmployees.slice(start, start + managementPageSize);
-  }, [sortedEmployees, managementPage, managementPageSize]);
-
-  const managementTotalPages =
-    Math.ceil(sortedEmployees.length / managementPageSize) || 1;
-
-  const activeEmployeesForAssignment = useMemo(() => {
-    return (employees || []).filter(
-      (e) =>
-        isUsVisaEmployee(e) &&
-        e.status === "Active" &&
-        e.employment_status === "Active"
+    return [...options].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }),
     );
   }, [employees]);
 
-  const handleUpdateTaskAssignment = (empId, updates) => {
-    if (!hasAdminAccess) return;
-
-    const timestamp = new Date().toISOString();
-
-    setEmployees((prev) =>
-      (prev || []).map((emp) => {
-        if (emp.id !== empId) return emp;
-
-        const shouldUpdateTaskOrder = Object.prototype.hasOwnProperty.call(
-          updates,
-          "task_order"
-        );
+  useEffect(() => {
+    if (!changedEmployees.length) return undefined;
 
         return {
           ...emp,
@@ -904,103 +840,81 @@ export default function SettingsPage() {
     }
   };
 
-  const handleBulkAction = (action) => {
-    if (!hasAdminAccess) {
-      handleToast(
-        "Access Denied: Administrative permissions required for bulk actions."
-      );
+  async function handleSyncKronos() {
+    if (!hasAdminAccess || syncing || saving) return;
+
+    if (
+      changedEmployees.length > 0 &&
+      !window.confirm(
+        "You have unsaved assignment changes. Synchronizing Kronos will discard those changes. Continue?",
+      )
+    ) {
       return;
     }
 
-    if (selectedEmpIds.length === 0) {
-      handleToast("No employees selected for bulk operations.");
-      return;
+    setSyncing(true);
+    setMessage(null);
+
+    try {
+      const result = await syncEmployeeAssignmentsFromKronos();
+      applyEmployeeRows(result?.data || []);
+
+      const summary = result?.summary || {};
+      setMessage({
+        type: "success",
+        text:
+          result?.message ||
+          `Kronos synchronized successfully. ${summary.eligible || 0} employees are ready for assignment.`,
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error?.response?.data?.message ||
+          error?.message ||
+          "Unable to synchronize Kronos employees.",
+      });
+    } finally {
+      setSyncing(false);
     }
+  }
 
-    setEmployees((prev) =>
-      (prev || []).map((emp) => {
-        if (!selectedEmpIds.includes(emp.id)) return emp;
+  async function handleSaveChanges() {
+    if (!hasAdminAccess || !changedEmployees.length || saving || syncing) return;
 
-        if (action === "activate") {
-          return {
-            ...emp,
-            status: "Active",
-            employment_status: "Active",
-            updated_at: new Date().toISOString(),
-          };
-        }
+    setSaving(true);
+    setMessage(null);
 
-        if (action === "deactivate") {
-          return {
-            ...emp,
-            status: "Inactive",
-            employment_status: "Inactive",
-            updated_at: new Date().toISOString(),
-          };
-        }
+    try {
+      const payload = changedEmployees.map((employee) => ({
+        sibsId: employee.sibsId,
+        taskOrder: employee.taskOrder,
+        heroDash: employee.heroDash,
+        msd: employee.msd,
+      }));
 
-        if (action === "reset_assignments") {
-          return {
-            ...emp,
-            task_order: "",
-            herodash: "",
-            msd: "",
-            task_order_assigned_at: null,
-            assigned_sub_account: null,
-            sub_account_assigned_at: null,
-            updated_at: new Date().toISOString(),
-          };
-        }
-
-        return emp;
-      })
-    );
-
-    setSelectedEmpIds([]);
-    handleToast(
-      `Bulk action '${action.replace("_", " ")}' successfully completed.`
-    );
-  };
-
-  const handleExportConfig = () => {
-    const fileContent = JSON.stringify(employees, null, 2);
-
-    const blob = new Blob([fileContent], {
-      type: "application/json",
-    });
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-
-    a.href = url;
-    a.download = `US_Visa_Employee_Configurations_${
-      new Date().toISOString().split("T")[0]
-    }.json`;
-
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    URL.revokeObjectURL(url);
-  };
-
-  const handleSelectAll = (e) => {
-    if (e.target.checked) {
-      setSelectedEmpIds(paginatedEmployees.map((emp) => emp.id));
-    } else {
-      setSelectedEmpIds([]);
+      const result = await saveEmployeeAssignments(payload);
+      applyEmployeeRows(result?.data || []);
+      setMessage({
+        type: "success",
+        text:
+          result?.message ||
+          `${payload.length} employee assignment${payload.length === 1 ? "" : "s"} saved successfully.`,
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error?.response?.data?.message ||
+          error?.message ||
+          "Unable to save employee assignments.",
+      });
+    } finally {
+      setSaving(false);
     }
-  };
+  }
 
-  const handleSelectRow = (id) => {
-    setSelectedEmpIds((prev) => {
-      if (prev.includes(id)) {
-        return prev.filter((item) => item !== id);
-      }
-
-      return [...prev, id];
-    });
-  };
+  const controlsDisabled = loading || syncing || saving || !hasAdminAccess;
 
   return (
     <div className="space-y-8 pb-10">
@@ -1027,25 +941,22 @@ export default function SettingsPage() {
         onSyncDatabase={handleFetchEmployees}
       />
 
-      <RosterUploadHistoryCard
-        employees={employees}
-        setEmployees={setEmployees}
-        userRole={userRole}
-        uploadLogs={uploadLogs}
-        onUploadComplete={handleRosterUploadComplete}
-      />
+                <div className="min-w-0">
+                  <h1 className="text-xl font-black tracking-tight text-slate-900 sm:text-2xl">
+                    Employee Source Assignment
+                  </h1>
+                  <p className="mt-1 text-sm font-medium text-slate-500">
+                    Connect each Kronos employee to their Task Order, HeroDash name, and MSD name.
+                  </p>
+                </div>
+              </div>
 
-      <div className="sibs-card sibs-page-card-in p-5 space-y-4">
-        <div className="flex flex-col gap-4 border-b border-slate-100 pb-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2">
-            <Settings className="h-5 w-5 text-slate-600" />
-            <div>
-              <h3 className="text-sm font-bold text-slate-800">
-                US Visa Employee Task Order Roster
-              </h3>
-              <p className="mt-0.5 text-[11px] text-slate-400">
-                Fetch all US Visa employees and assign Task Order, HeroDash, and MSD
-              </p>
+              {!hasAdminAccess ? (
+                <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
+                  <ShieldAlert className="h-4 w-4" />
+                  Administrator access is required to edit assignments.
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -1096,57 +1007,94 @@ export default function SettingsPage() {
                 Bulk ({selectedEmpIds.length}):
               </span>
 
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Button
+                type="button"
                 variant="outline"
-                onClick={() => handleBulkAction("activate")}
-                className="rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition-colors hover:bg-slate-200"
+                onClick={resetChanges}
+                disabled={!changedEmployees.length || controlsDisabled}
+                className="h-10 rounded-xl border-slate-200 bg-white px-4 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
               >
-                Activate Selected
+                <RotateCcw className="h-4 w-4" />
+                Reset
               </Button>
 
               <Button
+                type="button"
                 variant="outline"
-                onClick={() => handleBulkAction("deactivate")}
-                className="rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition-colors hover:bg-slate-200"
+                onClick={handleSyncKronos}
+                disabled={controlsDisabled}
+                className="h-10 rounded-xl border-[#0D4676] bg-white px-4 text-sm font-extrabold text-[#0D4676] hover:bg-blue-50"
               >
-                Deactivate Selected
+                <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+                {syncing ? "Syncing Kronos..." : "Sync Kronos"}
               </Button>
 
               <Button
-                variant="outline"
-                onClick={() => handleBulkAction("reset_assignments")}
-                className="rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition-colors hover:bg-slate-200"
-                title="Reset Task Order Assignments"
+                type="button"
+                onClick={handleSaveChanges}
+                disabled={!changedEmployees.length || controlsDisabled}
+                className="h-10 rounded-xl bg-[#0D4676] px-4 text-sm font-extrabold text-white shadow-sm hover:bg-[#063C69]"
               >
-                Reset Assignments
-              </Button>
-
-              <Button
-                variant="outline"
-                onClick={handleExportConfig}
-                className="flex items-center gap-1 rounded-lg border border-emerald-100 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"
-              >
-                <Download className="h-3 w-3" />
-                <span>Backup Config</span>
+                <Save className={`h-4 w-4 ${saving ? "animate-pulse" : ""}`} />
+                {saving
+                  ? "Saving..."
+                  : changedEmployees.length
+                    ? `Save ${changedEmployees.length} Change${changedEmployees.length === 1 ? "" : "s"}`
+                    : "Save Changes"}
               </Button>
             </div>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by SIB ID, Name, Task Order..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setManagementPage(1);
-              }}
-              className="sibs-filter-input min-h-[36px] w-full pl-8 pr-3 text-xs"
-            />
           </div>
+        </section>
+
+        {message ? (
+          <MessageBanner
+            type={message.type}
+            onClose={() => setMessage(null)}
+          >
+            {message.text}
+          </MessageBanner>
+        ) : null}
+
+        {loading ? (
+          <LoadingState />
+        ) : (
+          <>
+            <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                icon={UsersRound}
+                label="Kronos Employees"
+                value={stats.total}
+                description="Employees available for assignment"
+                tone="blue"
+              />
+              <StatCard
+                icon={Database}
+                label="Task Order Assigned"
+                value={stats.withTaskOrder}
+                description={`${stats.total - stats.withTaskOrder} still missing`}
+                tone="slate"
+              />
+              <StatCard
+                icon={UserRoundCheck}
+                label="HeroDash Mapped"
+                value={stats.withHeroDash}
+                description={`${stats.total - stats.withHeroDash} still missing`}
+                tone="amber"
+              />
+              <StatCard
+                icon={CheckCircle2}
+                label="Fully Mapped"
+                value={stats.complete}
+                description={`${stats.incomplete} incomplete employee mappings`}
+                tone="green"
+              />
+            </section>
+
+            <RawKpiImportCard
+              disabled={!hasAdminAccess || syncing || saving}
+              hasUnsavedAssignments={changedEmployees.length > 0}
+            />
 
 
           <div className="flex w-full items-center gap-1 text-xs sm:w-auto">
@@ -1317,10 +1265,10 @@ export default function SettingsPage() {
                   {hasAdminAccess && (
                     <td className="p-3 text-center">
                       <input
-                        type="checkbox"
-                        checked={selectedEmpIds.includes(emp.id)}
-                        onChange={() => handleSelectRow(emp.id)}
-                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        value={searchQuery}
+                        onChange={(event) => setSearchQuery(event.target.value)}
+                        placeholder="Search SIB-ID, employee, Task Order..."
+                        className={`${INPUT_CLASS} pl-9`}
                       />
                     </td>
                   )}
@@ -1336,7 +1284,6 @@ export default function SettingsPage() {
                     <div className="font-sans text-[11px] text-slate-500">
                       {emp.email}
                     </div>
-                  </td>
 
                   <td className="p-3 font-medium text-slate-700">
                     {emp.position || "-"}
@@ -1619,254 +1566,186 @@ export default function SettingsPage() {
                 {hasAdminAccess ? (
                   <>
                     <select
-                      value={getTaskOrder(emp)}
-                      onChange={(e) =>
-                        handleUpdateTaskAssignment(emp.id, {
-                          task_order: e.target.value,
-                        })
-                      }
-                      className="sibs-filter-input w-full text-xs"
+                      value={completenessFilter}
+                      onChange={(event) => setCompletenessFilter(event.target.value)}
+                      className={`${INPUT_CLASS} sm:w-[160px]`}
                     >
-                      <option value="">Select Task Order...</option>
-                      {taskOrderOptions.map((taskOrder) => (
-                        <option key={taskOrder} value={taskOrder}>
-                          {taskOrder}
-                        </option>
-                      ))}
+                      <option value="all">All Employees</option>
+                      <option value="complete">Fully Mapped</option>
+                      <option value="incomplete">Incomplete</option>
                     </select>
-
-                    <input
-                      value={getHeroDash(emp)}
-                      onChange={(e) =>
-                        handleUpdateTaskAssignment(emp.id, {
-                          herodash: e.target.value,
-                        })
-                      }
-                      placeholder="HeroDash"
-                      className="sibs-filter-input w-full text-xs"
-                    />
-
-                    <input
-                      value={getMsd(emp)}
-                      onChange={(e) =>
-                        handleUpdateTaskAssignment(emp.id, {
-                          msd: e.target.value,
-                        })
-                      }
-                      placeholder="MSD"
-                      className="sibs-filter-input w-full text-xs"
-                    />
-                  </>
-                ) : (
-                  <div className="lg:col-span-3">
-                    <span className="block text-[11px] font-bold text-slate-700">
-                      {getTaskOrder(emp) || "Unassigned"}
-                    </span>
-                    <span className="block text-[10px] text-slate-400">
-                      HeroDash: {getHeroDash(emp) || "-"} | MSD:{" "}
-                      {getMsd(emp) || "-"}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {activeEmployeesForAssignment.length === 0 && (
-              <div className="p-8 text-center text-sm font-bold text-slate-500">
-                No active US Visa employees available for assignment.
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="sibs-card sibs-page-card-in space-y-4 p-5">
-          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-            <History className="h-5 w-5 text-indigo-600" />
-            <div>
-              <h3 className="text-sm font-bold text-slate-800">
-                HRIS Audit Sync Log Trail
-              </h3>
-              <p className="mt-0.5 text-[11px] text-slate-400">
-                Chronological record of Kronos synchronizations
-              </p>
-            </div>
-          </div>
-
-          <p className="text-xs leading-normal text-slate-500">
-            Maintains a secure, read-only administrative trace of HRIS loading,
-            updates, and task order assignment checks.
-          </p>
-
-          <div className="thin-scroll max-h-[400px] overflow-y-auto rounded-xl border border-slate-200">
-            {safeSyncLogs.map((log) => (
-              <div
-                key={log.id}
-                onClick={() => setSelectedAuditLog(log)}
-                className="flex cursor-pointer flex-col justify-between gap-2 border-b border-slate-100 bg-white p-3 text-xs font-mono transition-colors last:border-b-0 hover:bg-slate-50 sm:flex-row sm:items-center"
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${
-                      log.result === "Success" || log.status === "Success"
-                        ? "bg-emerald-500"
-                        : "bg-red-500"
-                    }`}
-                  />
-
-                  <div className="min-w-0 truncate">
-                    <span className="font-semibold text-slate-700">
-                      {log.date || log.timestamp?.split("T")[0] || "Unknown Date"}{" "}
-                      {log.time || ""}
-                    </span>
-                    <span className="ml-2 text-[10px] text-slate-400">
-                      By: {log.performedBy || log.source || "System"}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-3 text-[11px]">
-                  <span className="font-bold text-emerald-600">
-                    +{log.summary?.added ?? log.recordsProcessed ?? 0} Add
-                  </span>
-                  <span className="font-bold text-slate-400">
-                    {log.summary?.retrieved ?? log.recordsProcessed ?? 0} Total
-                  </span>
-                  <Eye className="h-3.5 w-3.5 text-slate-400" />
-                </div>
-              </div>
-            ))}
-
-            {safeSyncLogs.length === 0 && (
-              <div className="p-8 text-center text-sm font-bold text-slate-500">
-                No sync logs found.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <BaseModal
-        open={!!selectedAuditLog}
-        onClose={() => setSelectedAuditLog(null)}
-        maxWidth="max-w-lg"
-      >
-        {selectedAuditLog && (
-          <>
-            <div className="flex items-center justify-between bg-slate-900 p-4 text-white">
-              <h3 className="flex items-center gap-1.5 font-sans text-sm font-bold">
-                <History className="h-4 w-4 text-indigo-400" />
-                Audit Session Details
-              </h3>
-
-              <Button
-                variant="outline"
-                onClick={() => setSelectedAuditLog(null)}
-                className="border-0 bg-transparent text-slate-300 hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <div className="space-y-4 p-5 font-mono text-xs">
-              <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-[11px]">
-                <p>
-                  Date:{" "}
-                  <strong className="text-slate-800">
-                    {selectedAuditLog.date ||
-                      selectedAuditLog.timestamp?.split("T")[0] ||
-                      "Unknown"}
-                  </strong>
-                </p>
-                <p>
-                  Time:{" "}
-                  <strong className="text-slate-800">
-                    {selectedAuditLog.time || "--:--"}
-                  </strong>
-                </p>
-                <p>
-                  Operator:{" "}
-                  <strong className="text-slate-800">
-                    {selectedAuditLog.performedBy ||
-                      selectedAuditLog.source ||
-                      "System"}
-                  </strong>
-                </p>
-                <p>
-                  Result:{" "}
-                  <span className="font-bold text-emerald-600">
-                    {selectedAuditLog.result || selectedAuditLog.status}
-                  </span>
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Metrics Comparison
-                </p>
-
-                <div className="grid grid-cols-2 gap-2 text-center text-[10px] sm:grid-cols-4">
-                  <div className="rounded border border-slate-150 bg-slate-50 p-2">
-                    <p className="text-slate-400">Retrieved</p>
-                    <p className="mt-1 text-sm font-bold text-slate-800">
-                      {selectedAuditLog.summary?.retrieved ??
-                        selectedAuditLog.recordsProcessed ??
-                        0}
-                    </p>
-                  </div>
-
-                  <div className="rounded border border-slate-150 bg-slate-50 p-2">
-                    <p className="text-blue-500">Added</p>
-                    <p className="mt-1 text-sm font-bold text-blue-600">
-                      {selectedAuditLog.summary?.added ??
-                        selectedAuditLog.recordsProcessed ??
-                        0}
-                    </p>
-                  </div>
-
-                  <div className="rounded border border-slate-150 bg-slate-50 p-2">
-                    <p className="text-amber-500">Updated</p>
-                    <p className="mt-1 text-sm font-bold text-amber-600">
-                      {selectedAuditLog.summary?.updated ?? 0}
-                    </p>
-                  </div>
-
-                  <div className="rounded border border-slate-150 bg-slate-50 p-2">
-                    <p className="text-rose-500">Inactive</p>
-                    <p className="mt-1 text-sm font-bold text-rose-600">
-                      {selectedAuditLog.summary?.markedInactive ?? 0}
-                    </p>
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-1 rounded-xl border border-slate-800 bg-slate-900 p-3 text-[10px] text-emerald-400">
-                <p className="mb-1 border-b border-slate-800 pb-1 font-sans text-slate-400">
-                  Full Output Trace Logs
-                </p>
-                <p className="leading-relaxed">
-                  &gt; Connection established successfully
-                </p>
-                <p className="leading-relaxed">
-                  &gt; {selectedAuditLog.details}
-                </p>
-                <p className="leading-relaxed">
-                  &gt; Audit trail written. Hash: 0x9f1a238b99
-                </p>
-              </div>
-            </div>
+              <div className="hidden overflow-x-auto lg:block">
+                <table className="w-full min-w-[1180px] border-collapse">
+                  <thead className="bg-[#0D4676] text-white">
+                    <tr>
+                      <th className="w-[150px] px-4 py-3.5 text-left text-xs font-black uppercase tracking-[0.08em]">
+                        SIB-ID
+                      </th>
+                      <th className="min-w-[250px] px-4 py-3.5 text-left text-xs font-black uppercase tracking-[0.08em]">
+                        Agent Name
+                      </th>
+                      <th className="min-w-[280px] px-4 py-3.5 text-left text-xs font-black uppercase tracking-[0.08em]">
+                        Task Order
+                      </th>
+                      <th className="min-w-[230px] px-4 py-3.5 text-left text-xs font-black uppercase tracking-[0.08em]">
+                        HeroDash
+                      </th>
+                      <th className="min-w-[230px] px-4 py-3.5 text-left text-xs font-black uppercase tracking-[0.08em]">
+                        MSD
+                      </th>
+                    </tr>
+                  </thead>
 
-            <div className="flex justify-end border-t border-slate-100 bg-slate-50 p-3">
-              <Button
-                variant="outline"
-                onClick={() => setSelectedAuditLog(null)}
-                className="rounded-lg bg-slate-200 px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-300"
-              >
-                Acknowledge Log
-              </Button>
-            </div>
-          </>
-        )}
-      </BaseModal>
+                  <tbody className="divide-y divide-slate-100">
+                    {visibleEmployees.map((employee) => (
+                      <tr
+                        key={employee.sibsId}
+                        className="bg-white transition hover:bg-slate-50/80"
+                      >
+                        <td className="px-4 py-3 align-middle">
+                          <span className="whitespace-nowrap text-sm font-black text-[#0D4676]">
+                            {employee.sibsId}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 align-middle">
+                          <span className="text-sm font-extrabold text-slate-900">
+                            {employee.agentName}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 align-middle">
+                          <TaskOrderField
+                            employee={employee}
+                            taskOrderOptions={taskOrderOptions}
+                            disabled={controlsDisabled}
+                            onChange={(value) =>
+                              updateEmployee(employee.sibsId, "taskOrder", value)
+                            }
+                          />
+                        </td>
+                        <td className="px-4 py-3 align-middle">
+                          <input
+                            value={employee.heroDash}
+                            onChange={(event) =>
+                              updateEmployee(
+                                employee.sibsId,
+                                "heroDash",
+                                event.target.value,
+                              )
+                            }
+                            disabled={controlsDisabled}
+                            placeholder="HeroDash username or name"
+                            className={INPUT_CLASS}
+                          />
+                        </td>
+                        <td className="px-4 py-3 align-middle">
+                          <input
+                            value={employee.msd}
+                            onChange={(event) =>
+                              updateEmployee(
+                                employee.sibsId,
+                                "msd",
+                                event.target.value,
+                              )
+                            }
+                            disabled={controlsDisabled}
+                            placeholder="MSD name"
+                            className={INPUT_CLASS}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="space-y-3 p-3 lg:hidden">
+                {visibleEmployees.map((employee) => (
+                  <article
+                    key={employee.sibsId}
+                    className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                  >
+                    <div className="border-b border-slate-100 pb-3">
+                      <p className="text-xs font-black uppercase tracking-[0.08em] text-[#0D4676]">
+                        {employee.sibsId}
+                      </p>
+                      <h3 className="mt-1 text-base font-black text-slate-900">
+                        {employee.agentName}
+                      </h3>
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-black uppercase tracking-[0.08em] text-slate-500">
+                          Task Order
+                        </label>
+                        <input
+                          list={`mobile-task-orders-${employee.sibsId.replace(/[^a-z0-9]/gi, "-")}`}
+                          value={employee.taskOrder}
+                          onChange={(event) =>
+                            updateEmployee(
+                              employee.sibsId,
+                              "taskOrder",
+                              event.target.value,
+                            )
+                          }
+                          disabled={controlsDisabled}
+                          placeholder="Select or type Task Order"
+                          className={INPUT_CLASS}
+                        />
+                        <datalist
+                          id={`mobile-task-orders-${employee.sibsId.replace(/[^a-z0-9]/gi, "-")}`}
+                        >
+                          {taskOrderOptions.map((taskOrder) => (
+                            <option key={taskOrder} value={taskOrder} />
+                          ))}
+                        </datalist>
+                      </div>
+
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-black uppercase tracking-[0.08em] text-slate-500">
+                          HeroDash
+                        </label>
+                        <input
+                          value={employee.heroDash}
+                          onChange={(event) =>
+                            updateEmployee(
+                              employee.sibsId,
+                              "heroDash",
+                              event.target.value,
+                            )
+                          }
+                          disabled={controlsDisabled}
+                          placeholder="HeroDash username or name"
+                          className={INPUT_CLASS}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-black uppercase tracking-[0.08em] text-slate-500">
+                          MSD
+                        </label>
+                        <input
+                          value={employee.msd}
+                          onChange={(event) =>
+                            updateEmployee(
+                              employee.sibsId,
+                              "msd",
+                              event.target.value,
+                            )
+                          }
+                          disabled={controlsDisabled}
+                          placeholder="MSD name"
+                          className={INPUT_CLASS}
+                        />
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
 
 
       <BaseModal
@@ -2124,189 +2003,26 @@ export default function SettingsPage() {
                   <p className="mb-0.5 font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
                     Supervisor
                   </p>
-                  <p className="truncate text-[15px] font-black tracking-tight text-slate-900">
-                    {editingEmployee.supervisor || "-"}
+                  <p className="mt-1 max-w-md text-xs font-medium text-slate-500">
+                    Adjust your search or filter, or synchronize Kronos to retrieve the current US Visa roster.
                   </p>
                 </div>
+              ) : null}
+
+              <div className="flex flex-col gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  Showing {visibleEmployees.length} of {employees.length} employees
+                </span>
+                <span>
+                  {changedEmployees.length > 0
+                    ? `${changedEmployees.length} unsaved change${changedEmployees.length === 1 ? "" : "s"}`
+                    : "All changes are saved"}
+                </span>
               </div>
-
-              <div className="space-y-3.5">
-                <label className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3.5 shadow-sm transition-colors hover:bg-slate-100/70">
-                  <div>
-                    <p className="font-bold text-slate-900">
-                      Include in Dashboard
-                    </p>
-                    <p className="mt-0.5 text-[11px] font-medium leading-relaxed text-slate-500">
-                      Render individual aggregate metrics in Executive summary cards
-                    </p>
-                  </div>
-
-                  <input
-                    type="checkbox"
-                    checked={!!editingEmployee.include_dashboard}
-                    onChange={(e) =>
-                      setEditingEmployee({
-                        ...editingEmployee,
-                        include_dashboard: e.target.checked,
-                      })
-                    }
-                    className="h-5 w-5 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500"
-                  />
-                </label>
-
-                <label className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3.5 shadow-sm transition-colors hover:bg-slate-100/70">
-                  <div>
-                    <p className="font-bold text-slate-900">Include in Reports</p>
-                    <p className="mt-0.5 text-[11px] font-medium leading-relaxed text-slate-500">
-                      Expose records in CSV and Excel downloads
-                    </p>
-                  </div>
-
-                  <input
-                    type="checkbox"
-                    checked={!!editingEmployee.include_reports}
-                    onChange={(e) =>
-                      setEditingEmployee({
-                        ...editingEmployee,
-                        include_reports: e.target.checked,
-                      })
-                    }
-                    className="h-5 w-5 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500"
-                  />
-                </label>
-
-                <label className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3.5 shadow-sm transition-colors hover:bg-slate-100/70">
-                  <div>
-                    <p className="font-bold text-slate-900">
-                      Enable Live KPI Tracking
-                    </p>
-                    <p className="mt-0.5 text-[11px] font-medium leading-relaxed text-slate-500">
-                      Simulate hourly data loads and calculate overall metrics
-                    </p>
-                  </div>
-
-                  <input
-                    type="checkbox"
-                    checked={!!editingEmployee.kpi_tracking_enabled}
-                    onChange={(e) =>
-                      setEditingEmployee({
-                        ...editingEmployee,
-                        kpi_tracking_enabled: e.target.checked,
-                      })
-                    }
-                    className="h-5 w-5 rounded-md border-slate-300 text-blue-600 focus:ring-blue-500"
-                  />
-                </label>
-
-                <div className="grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                      Active Status
-                    </label>
-
-                    <select
-                      value={editingEmployee.status}
-                      onChange={(e) =>
-                        setEditingEmployee({
-                          ...editingEmployee,
-                          status: e.target.value,
-                          employment_status:
-                            e.target.value === "Active" ? "Active" : "Inactive",
-                        })
-                      }
-                      className="sibs-filter-input w-full text-sm font-bold"
-                    >
-                      <option value="Active">Active</option>
-                      <option value="Inactive">Inactive</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                      Task Order
-                    </label>
-
-                    <select
-                      value={editingEmployee.task_order || ""}
-                      onChange={(e) =>
-                        setEditingEmployee({
-                          ...editingEmployee,
-                          task_order: e.target.value,
-                          assigned_sub_account: e.target.value,
-                          task_order_assigned_at: new Date().toISOString(),
-                          sub_account_assigned_at: new Date().toISOString(),
-                        })
-                      }
-                      className="sibs-filter-input w-full text-sm font-bold"
-                    >
-                      <option value="">Select Task Order...</option>
-                      {taskOrderOptions.map((taskOrder) => (
-                        <option key={taskOrder} value={taskOrder}>
-                          {taskOrder}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                      HeroDash
-                    </label>
-
-                    <input
-                      value={editingEmployee.herodash || ""}
-                      onChange={(e) =>
-                        setEditingEmployee({
-                          ...editingEmployee,
-                          herodash: e.target.value,
-                        })
-                      }
-                      placeholder="HeroDash"
-                      className="sibs-filter-input w-full text-sm font-bold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block font-sans text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                      MSD
-                    </label>
-
-                    <input
-                      value={editingEmployee.msd || ""}
-                      onChange={(e) =>
-                        setEditingEmployee({
-                          ...editingEmployee,
-                          msd: e.target.value,
-                        })
-                      }
-                      placeholder="MSD"
-                      className="sibs-filter-input w-full text-sm font-bold"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 rounded-b-2xl border-t border-slate-100 bg-slate-50 p-4">
-              <Button
-                variant="outline"
-                onClick={() => setEditingEmployee(null)}
-                className="rounded-xl border border-slate-200 bg-white px-5 py-2 text-[13px] font-bold text-slate-700 shadow-sm transition-all hover:bg-slate-100"
-              >
-                Cancel
-              </Button>
-
-              <Button
-                variant="outline"
-                onClick={() => handleSaveEmployeeConfig(editingEmployee)}
-                className="rounded-xl border-0 bg-blue-600 px-5 py-2 text-[13px] font-bold text-white shadow-sm transition-all hover:bg-blue-700"
-              >
-                Save Settings
-              </Button>
-            </div>
+            </section>
           </>
         )}
-      </BaseModal>
+      </div>
     </div>
   );
 }

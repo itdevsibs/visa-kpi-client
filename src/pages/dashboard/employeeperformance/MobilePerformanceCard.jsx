@@ -1,13 +1,7 @@
 import React, { useMemo } from "react";
 import { ChevronRight } from "lucide-react";
-
-function formatSeconds(sec = 0) {
-  const safeSec = Number.isFinite(Number(sec)) ? Number(sec) : 0;
-  const h = Math.floor(safeSec / 3600);
-  const m = Math.floor((safeSec % 3600) / 60);
-
-  return `${h}h ${m}m`;
-}
+import { KPI_HEADERS } from "../../../constants/kpiHeaders.js";
+import { formatSeconds } from "../../../lib/utils/formatters.js";
 
 function MobilePerformanceCard({ row, onClick }) {
   const styles = useMemo(() => {
@@ -61,14 +55,14 @@ function MobilePerformanceCard({ row, onClick }) {
           <p className={`font-mono text-lg font-bold ${styles.efficiencyColor}`}>
             {row.efficiency}%
           </p>
-          <p className="text-[10px] font-medium text-slate-400">Efficiency</p>
+          <p className="text-[10px] font-medium text-slate-400">{KPI_HEADERS.actualEfficiency}</p>
         </div>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
         <div>
           <p className="text-[10px] font-bold uppercase text-slate-400">
-            Calls
+            {KPI_HEADERS.handledCalls}
           </p>
           <p className="font-mono text-sm font-semibold text-slate-800">
             {row.handledCalls}
@@ -77,7 +71,7 @@ function MobilePerformanceCard({ row, onClick }) {
 
         <div>
           <p className="text-[10px] font-bold uppercase text-slate-400">
-            Logged Time
+            {KPI_HEADERS.actualLoggedTime}
           </p>
           <p className="font-mono text-sm font-semibold text-slate-800">
             {formatSeconds(row.loggedSeconds)}

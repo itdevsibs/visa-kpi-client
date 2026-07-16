@@ -1,4 +1,5 @@
-import React from "react";
+import { KPI_HEADERS } from "../../constants/kpiHeaders.js";
+import { formatSeconds } from "../../lib/utils/formatters.js";
 import { X } from "lucide-react";
 import BaseModal from "./BaseModal";
 
@@ -27,7 +28,7 @@ export const DetailModal = ({ isOpen, onClose, employee }) => {
         
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-            <div className="text-xs text-slate-500 mb-1">Efficiency</div>
+            <div className="text-xs text-slate-500 mb-1">{KPI_HEADERS.actualEfficiency}</div>
             <div className={`text-2xl font-bold ${
               employee.actualEfficiency >= 95 ? 'text-green-600' :
               employee.actualEfficiency >= 80 ? 'text-amber-600' : 'text-red-600'
@@ -36,14 +37,14 @@ export const DetailModal = ({ isOpen, onClose, employee }) => {
             </div>
           </div>
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-            <div className="text-xs text-slate-500 mb-1">Handled Calls</div>
+            <div className="text-xs text-slate-500 mb-1">{KPI_HEADERS.handledCalls}</div>
             <div className="text-2xl font-bold text-slate-800">{employee.handledCalls}</div>
             <div className="text-xs text-slate-500 mt-1">Target: {employee.targetCalls}</div>
           </div>
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-            <div className="text-xs text-slate-500 mb-1">Logged Time</div>
+            <div className="text-xs text-slate-500 mb-1">{KPI_HEADERS.actualLoggedTime}</div>
             <div className="text-2xl font-bold text-slate-800">
-              {Math.floor(employee.actualLoggedTime / 3600)}h {Math.floor((employee.actualLoggedTime % 3600) / 60)}m
+              {formatSeconds(employee.actualLoggedTime)}
             </div>
           </div>
         </div>
@@ -51,19 +52,19 @@ export const DetailModal = ({ isOpen, onClose, employee }) => {
         <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-4">Detailed Metrics</h3>
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
           <div className="flex flex-col sm:flex-row justify-between gap-1 p-4">
-            <span className="text-sm text-slate-600">Average Talk Time</span>
-            <span className="text-sm font-medium text-slate-800">{employee.averageTalkTime}s (Target: {employee.targetTalkTime}s)</span>
+            <span className="text-sm text-slate-600">{KPI_HEADERS.avgTalkTime}</span>
+            <span className="text-sm font-medium text-slate-800">{formatSeconds(employee.averageTalkTime)} (Target: {formatSeconds(employee.targetTalkTime)})</span>
           </div>
           <div className="flex flex-col sm:flex-row justify-between gap-1 p-4">
-            <span className="text-sm text-slate-600">Average Hold Time</span>
-            <span className="text-sm font-medium text-slate-800">{employee.averageHoldTime}s (Target: {employee.targetHoldTime}s)</span>
+            <span className="text-sm text-slate-600">{KPI_HEADERS.avgHoldTime}</span>
+            <span className="text-sm font-medium text-slate-800">{formatSeconds(employee.averageHoldTime)} (Target: {formatSeconds(employee.targetHoldTime)})</span>
           </div>
           <div className="flex flex-col sm:flex-row justify-between gap-1 p-4">
             <span className="text-sm text-slate-600">Phone Occupancy</span>
             <span className="text-sm font-medium text-slate-800">{employee.phoneOccupancy}%</span>
           </div>
           <div className="flex flex-col sm:flex-row justify-between gap-1 p-4">
-            <span className="text-sm text-slate-600">Email Capacity</span>
+            <span className="text-sm text-slate-600">{KPI_HEADERS.availableEmailCapacity}</span>
             <span className="text-sm font-medium text-slate-800">{employee.availableEmailCapacity} / {employee.dailyTotalSlots}</span>
           </div>
         </div>

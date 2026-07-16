@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import MobilePerformanceCard from "./MobilePerformanceCard.jsx";
 import { PerformanceStatsBar } from "./PerformanceStatsBar.jsx";
-import EmployeeFilterDropdown from "../../../components/ui/EmployeeFilterDropdown.jsx";
 import LazyChartMount from "../../../components/ui/LazyChartMount.jsx";
 import { useDebounce } from "../../../hooks/useDebounce.js";
 import { getUsVisaKpiPerformanceRecords } from "../../../services/api/usVisaKpiPerformanceApi.js";
@@ -102,6 +101,15 @@ export default function PerformancePage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [selectedRowEmployee, setSelectedRowEmployee] = useState(null);
+  const [hourlyDrawerData, setHourlyDrawerData] = useState([]);
+  const [historicalDrawerData, setHistoricalDrawerData] = useState([]);
+  const [isBootstrapLoading, setIsBootstrapLoading] = useState(true);
+  const [isRecordsLoading, setIsRecordsLoading] = useState(false);
+  const [isDrawerLoading, setIsDrawerLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [sortColumn, setSortColumn] = useState("employeeName");
+  const [sortDirection, setSortDirection] = useState("asc");
+  const [isPending, startTransition] = useTransition();
 
   const [sortColumn, setSortColumn] = useState("employeeName");
   const [sortDirection, setSortDirection] = useState("asc");
@@ -240,7 +248,22 @@ export default function PerformancePage() {
         team.includes(query)
       );
     });
-  }, [baseAggregatedData, debouncedSearchQuery]);
+    setCurrentPage(1);
+  }, []);
+
+  const searchedData = useMemo(() => {
+    const query = normalizeComparableText(debouncedSearchQuery);
+
+    if (!query) {
+      return records;
+    }
+
+    return records.filter((row) =>
+      normalizeComparableText(
+        [row.employeeName, row.email, row.position, row.team].join(" "),
+      ).includes(query),
+    );
+  }, [debouncedSearchQuery, records]);
 
   const sortedData = useMemo(() => {
     const sorted = [...searchedData];
@@ -267,7 +290,7 @@ export default function PerformancePage() {
   const paginatedData = useMemo(() => {
     const startIndex = (currentPage - 1) * pageSize;
     return sortedData.slice(startIndex, startIndex + pageSize);
-  }, [sortedData, currentPage, pageSize]);
+  }, [currentPage, pageSize, sortedData]);
 
   const totalPages = Math.ceil(sortedData.length / pageSize) || 1;
 
@@ -467,7 +490,6 @@ export default function PerformancePage() {
               </div>
             )}
           </div>
-        </div>
 
         <div className="flex w-full shrink-0 flex-col gap-1.5 md:flex-1">
           <label className="pl-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">
@@ -527,7 +549,6 @@ export default function PerformancePage() {
               ))}
             </select>
           </div>
-        </div>
 
         <div className="flex w-full shrink-0 flex-col gap-1.5 md:flex-1">
           <label className="pl-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">
@@ -578,7 +599,7 @@ export default function PerformancePage() {
           ))
         ) : (
           <div className="rounded-xl border border-slate-200 bg-white px-5 py-10 text-center text-sm font-bold text-slate-500">
-            No records found.
+            No matched records found.
           </div>
         )}
       </div>

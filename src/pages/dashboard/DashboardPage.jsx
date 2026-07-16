@@ -4,11 +4,60 @@ import { useRoster } from "../../services/context/RosterContext.jsx";
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
+import { createPortal } from "react-dom";
 import { Button } from "../../components/ui/button.jsx";
 
-import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList } from 'recharts';
-import { Clock, Phone, ArrowUpRight, ArrowDownRight, RefreshCw, FileText, Download, Printer, User, Mail, Award, Percent, Zap, BarChart3, HelpCircle } from 'lucide-react';
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  LabelList,
+} from "recharts";
+import {
+  Clock,
+  Phone,
+  ArrowUpRight,
+  ArrowDownRight,
+  RefreshCw,
+  FileText,
+  Download,
+  Printer,
+  User,
+  Mail,
+  Award,
+  Percent,
+  Zap,
+  BarChart3,
+  HelpCircle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  CalendarDays,
+  Check,
+  Database,
+  AlertCircle,
+} from "lucide-react";
 import { AnimatedNumber } from "../../components/ui/motion.jsx";
 import EmployeeFilterDropdown from "../../components/ui/EmployeeFilterDropdown.jsx";
 import LazyChartMount from "../../components/ui/LazyChartMount.jsx";
@@ -180,7 +229,7 @@ export default function DashboardPage() {
     }
 
     return `${selectedEmpIds.length} Employees Selected`;
-  }, [selectedEmpIds, employees]);
+  }, [employees, selectedEmpIds]);
 
   const summaryMetrics = useMemo(() => {
     return dashboardData?.summaryMetrics || EMPTY_SUMMARY_METRICS;
@@ -194,15 +243,16 @@ export default function DashboardPage() {
     return dashboardData?.teamInsights || null;
   }, [dashboardData]);
 
-  // Helper for rendering trend indicators
   const renderTrend = (value, inverse = false) => {
-    const isPositive = value >= 0;
+    const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
+    const isPositive = safeValue >= 0;
     const isGood = inverse ? !isPositive : isPositive;
-    const color = isGood ? 'text-emerald-600' : 'text-rose-600';
+    const color = isGood ? "text-emerald-600" : "text-rose-600";
     const Icon = isPositive ? ArrowUpRight : ArrowDownRight;
+
     return (
-      <span className={`${color} font-mono flex items-center gap-0.5`}>
-        <Icon className="h-3 w-3" /> {Math.abs(value)}%
+      <span className={`${color} flex items-center gap-0.5 font-mono`}>
+        <Icon className="h-3 w-3" /> {Math.abs(safeValue)}%
       </span>
     );
   };
@@ -210,57 +260,61 @@ export default function DashboardPage() {
 
   // Donut chart phone occupancy parts
   const donutData = useMemo(() => {
-    const occupied = summaryMetrics.phoneOccupancy;
-    const available = Math.round((100 - occupied) * 0.7); // Let's say available is 70% of non-occupied
-    const idle = Math.max(0, 100 - occupied - available); // Rest is idle
-    return [{
-      name: 'Occupied',
-      value: occupied,
-      color: '#0ea5e9'
-    },
-    // Sky-500
-    {
-      name: 'Available',
-      value: available,
-      color: '#10b981'
-    },
-    // Emerald-500
-    {
-      name: 'Idle',
-      value: idle,
-      color: '#f59e0b'
-    } // Amber-500
+    const occupied = clamp(summaryMetrics.phoneOccupancy, 0, 100);
+    const rawAvailable =
+      summaryMetrics.loggedTime > 0
+        ? (summaryMetrics.availableSeconds / summaryMetrics.loggedTime) * 100
+        : 0;
+    const available = clamp(rawAvailable, 0, Math.max(0, 100 - occupied));
+    const idle = Math.max(0, 100 - occupied - available);
+
+    return [
+      {
+        name: "Occupied",
+        value: Math.round(occupied * 100) / 100,
+        color: "#0ea5e9",
+      },
+      {
+        name: "Available",
+        value: Math.round(available * 100) / 100,
+        color: "#10b981",
+      },
+      {
+        name: "Idle",
+        value: Math.round(idle * 100) / 100,
+        color: "#f59e0b",
+      },
     ];
-  }, [summaryMetrics.phoneOccupancy]);
+  }, [summaryMetrics]);
 
 
-  // Dynamic sparkline data derived from hourlyChartData
   const sparklineDataMap = useMemo(() => {
     const keys = [
-      'Logged Time',
-      'Calls Actual',
-      'Avg Talk Time (s)',
-      'Avg Hold Time (s)',
-      'Occupied %',
-      'Email Capacity',
-      'Actual Emails',
-      'Efficiency %',
+      "Logged Time",
+      "Calls Actual",
+      "Avg Talk Time (s)",
+      "Avg Hold Time (s)",
+      "Occupied %",
+      "Email Capacity",
+      "Actual Emails",
+      "Efficiency %",
     ];
 
-    return keys.reduce((acc, key) => {
-      acc[key] = hourlyChartData.map((d) => ({
-        val: d[key] ?? 0,
-        idx: d.hour,
+    return keys.reduce((accumulator, key) => {
+      accumulator[key] = hourlyChartData.map((row) => ({
+        val: Number(row[key] || 0),
+        idx: row.hour,
       }));
 
-      return acc;
+      return accumulator;
     }, {});
   }, [hourlyChartData]);
 
   const getSparklineData = useCallback(
     (key) => sparklineDataMap[key] || [],
-    [sparklineDataMap]
+    [sparklineDataMap],
   );
+
   const triggerRefresh = async () => {
     setIsRefreshing(true);
 
@@ -285,6 +339,7 @@ export default function DashboardPage() {
       3000
     );
   };
+
   const handleExport = async (format) => {
     window.dispatchEvent(new CustomEvent('show-toast', { detail: `Preparing US Visa KPI report in ${format} format...` }));
     
@@ -297,17 +352,30 @@ export default function DashboardPage() {
     const file = new Blob([`US Visa KPI Report\nDate: ${selectedDate}\nPeriod: ${HOURS.find(h => h.value === fromHour)?.label || ''} to ${HOURS.find(h => h.value === toHour)?.label || ''}\nTarget Employee: ${selectedEmployeeName}\n\nMetrics:\nActual Logged Time: ${summaryMetrics.loggedFormatted} (Achievement: ${summaryMetrics.loggedAchievement}%)\nHandled Calls: ${summaryMetrics.handledCalls}\nAverage Talk Time: ${summaryMetrics.avgTalkTime}s\nAverage Hold Time: ${summaryMetrics.avgHoldTime}s\nPhone Occupancy: ${summaryMetrics.phoneOccupancy}%\nActual Efficiency: ${summaryMetrics.actualEfficiency}%`], {
       type: 'text/plain'
     });
-    element.href = URL.createObjectURL(file);
-    element.download = `US_Visa_KPI_${selectedEmployeeName.replace(/\s+/g, '_')}_${selectedDate}.${format === 'Excel' ? 'csv' : 'txt'}`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-    window.dispatchEvent(new CustomEvent('show-toast', { detail: `Report successfully compiled & downloaded!` }));
-    setTimeout(() => window.dispatchEvent(new CustomEvent('show-toast', { detail: null })), 4000);
+    const link = document.createElement("a");
+    const objectUrl = URL.createObjectURL(file);
+
+    link.href = objectUrl;
+    link.download = `US_Visa_Matched_KPI_${selectedDate}.${extension}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+
+    window.dispatchEvent(
+      new CustomEvent("show-toast", {
+        detail: "Matched KPI report downloaded successfully.",
+      }),
+    );
   };
+
   const handlePrint = () => {
     window.print();
   };
+
+  const isKronosEmployeesLoading = isBootstrapLoading;
+  const kronosEmployeesError = bootstrapError;
+  const loadKronosEmployees = loadDashboardBootstrap;
   return <div className="space-y-6" id="dashboard-container">
 
       {/* Title & Actions Bar */}
@@ -317,7 +385,7 @@ export default function DashboardPage() {
             US Visa KPI Dashboard
           </h1>
           <p className="text-sm text-slate-500 font-sans mt-0.5">
-            Real-Time Productivity & Performance Monitoring
+            Matched Database Productivity & Performance Monitoring
           </p>
         </div>
 
@@ -358,88 +426,148 @@ export default function DashboardPage() {
       )}
 
       {/* Dashboard Filters Group */}
-<div className="flex flex-col md:flex-row items-end gap-4 bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm relative z-50 mb-6 w-full">
-  {/* Employee */}
-  <div className="flex flex-col gap-1.5 w-full md:flex-[1.35] shrink-0">
-    {userRole === "Employee" ? (
-      <>
-        <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
-          Employee
-        </label>
-        <div className="flex items-center gap-2 bg-slate-50 text-slate-700 text-xs px-3 py-2 rounded-lg border border-slate-200 cursor-not-allowed min-h-[38px]">
-          <User className="h-3.5 w-3.5 text-slate-400" />
-          <span className="font-semibold truncate">{selectedEmployeeName}</span>
+      <div className="relative z-[100] mb-6 w-full overflow-visible rounded-xl border border-[#E4E7EC] bg-white p-4 shadow-sm">
+        <div className="grid w-full grid-cols-1 gap-3 md:grid-cols-[minmax(280px,1.35fr)_minmax(210px,0.8fr)_minmax(330px,1fr)] md:items-end">
+          <div className="relative z-[80] min-w-0 overflow-visible">
+            {isKronosEmployeesLoading ? (
+              <>
+                <label className="mb-1 block text-sm font-bold text-[#101828]">
+                  Employee
+                </label>
+
+                <div className={`flex h-11 items-center gap-2 ${FILTER_EDGE} border border-[#D0D5DD] bg-gray-50 px-4 text-sm font-semibold text-[#667085]`}>
+                  <RefreshCw className="h-4 w-4 animate-spin text-sibs-primary-1" />
+                  <span className="truncate">Loading matched US Visa employees...</span>
+                </div>
+              </>
+            ) : kronosEmployeesError ? (
+              <>
+                <label className="mb-1 block text-sm font-bold text-[#101828]">
+                  Employee
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    loadDashboardBootstrap().catch(() => {})
+                  }
+                  className={`flex h-11 w-full items-center gap-2 ${FILTER_EDGE} border border-rose-200 bg-rose-50 px-4 text-left text-sm font-semibold text-rose-700 transition hover:bg-rose-100`}
+                  title={kronosEmployeesError}
+                >
+                  <RefreshCw className="h-4 w-4 shrink-0" />
+                  <span className="truncate">
+                    Failed to load matched employees. Click to retry.
+                  </span>
+                </button>
+              </>
+            ) : userRole === 'Employee' ? (
+              <>
+                <label className="mb-1 block text-sm font-bold text-[#101828]">
+                  Employee
+                </label>
+
+                <div className={`flex h-11 items-center gap-2 ${FILTER_EDGE} border border-[#D0D5DD] bg-gray-50 px-4 text-sm font-bold text-[#344054]`}>
+                  <User className="h-4 w-4 text-[#667085]" />
+                  <span className="truncate">{selectedEmployeeName}</span>
+                </div>
+              </>
+            ) : activeEmployees.length === 0 ? (
+              <>
+                <label className="mb-1 block text-sm font-bold text-[#101828]">
+                  Employee
+                </label>
+
+                <div className={`flex h-11 items-center gap-2 ${FILTER_EDGE} border border-[#D0D5DD] bg-gray-50 px-4 text-sm font-semibold text-[#667085]`}>
+                  <User className="h-4 w-4" />
+                  <span className="truncate">
+                    No matched active US Visa employees found
+                  </span>
+                </div>
+              </>
+            ) : (
+              <DashboardEmployeeDropdown
+                employees={activeEmployees}
+                selectedIds={selectedEmpIds}
+                onChange={(newIds) => {
+                  startTransition(() => setSelectedEmpIds(newIds));
+                }}
+              />
+            )}
+          </div>
+
+          <div className="relative z-[70] min-w-0 overflow-visible">
+            <DashboardDatePicker
+              value={selectedDate}
+              onChange={(nextDate) =>
+                startTransition(() => setSelectedDate(nextDate))
+              }
+            />
+          </div>
+
+          <div className="relative z-[60] min-w-0 overflow-visible">
+            <label className="mb-1 block text-sm font-bold text-[#101828]">
+              Time Range
+            </label>
+
+            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+              <DashboardTimeDropdown
+                value={fromHour}
+                options={HOURS}
+                onChange={(nextHour) => {
+                  startTransition(() => {
+                    setFromHour(nextHour);
+
+                    // Keep the end time later than the selected start time.
+                    if (toHour <= nextHour) {
+                      setToHour(Math.min(24, nextHour + 1));
+                    }
+                  });
+                }}
+                placeholder="Search start time..."
+              />
+
+              <span className="text-sm font-bold text-[#98A2B3]">to</span>
+
+              <DashboardTimeDropdown
+                value={toHour}
+                options={END_TIMES.filter(
+                  (endTime) => endTime.value > fromHour,
+                )}
+                onChange={(nextHour) => {
+                  if (nextHour > fromHour) {
+                    startTransition(() => setToHour(nextHour));
+                  }
+                }}
+                placeholder="Search end time..."
+              />
+            </div>
+          </div>
         </div>
-      </>
-    ) : (
-      <EmployeeFilterDropdown
-        label="EMPLOYEE"
-        employees={activeEmployees}
-        selectedIds={selectedEmpIds}
-        onChange={(newIds) => {
-          startTransition(() => setSelectedEmpIds(newIds));
-        }}
-        placeholder="Search team members..."
-        selectionMode="immediate"
-      />
-    )}
-  </div>
+      </div>
 
-  {/* Date */}
-  <div className="flex flex-col gap-1.5 w-full md:flex-1 shrink-0">
-    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
-      Date
-    </label>
-    <input
-      type="date"
-      value={selectedDate}
-      onChange={(e) => startTransition(() => setSelectedDate(e.target.value))}
-      className="sibs-filter-input w-full bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200 text-center cursor-pointer"
-    />
-  </div>
+      {dashboardDataError ? (
+        <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{dashboardDataError}</span>
+        </div>
+      ) : null}
 
-  {/* Time Range */}
-  <div className="flex flex-col gap-1.5 w-full md:flex-1 shrink-0">
-    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1">
-      Time Range
-    </label>
+      {showDashboardLoading ? (
+        <div className="flex min-h-[46px] items-center justify-center gap-2 rounded-xl border border-[#D7DEE8] bg-white px-4 py-3 text-sm font-semibold text-[#667085] shadow-sm">
+          <RefreshCw className="h-4 w-4 animate-spin text-[#0D4676]" />
+          <span>Loading matched KPI records...</span>
+        </div>
+      ) : null}
 
-    <div className="flex items-center gap-2">
-      <select
-        value={fromHour}
-        onChange={(e) => {
-          const val = parseInt(e.target.value);
-          if (val < toHour) startTransition(() => setFromHour(val));
-        }}
-        className="sibs-filter-input flex-1 bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200 cursor-pointer"
-      >
-        {HOURS.map((h) => (
-          <option key={`from-${h.value}`} value={h.value} disabled={h.value >= toHour}>
-            {h.label}
-          </option>
-        ))}
-      </select>
+      {showNoDashboardRecords ? (
+        <div className="flex min-h-[46px] items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+          <Database className="h-4 w-4" />
+          <span>No matched KPI records were found for the selected date and time range.</span>
+        </div>
+      ) : null}
 
-      <span className="text-slate-400 font-medium text-sm">-</span>
-
-      <select
-        value={toHour}
-        onChange={(e) => {
-          const val = parseInt(e.target.value);
-          if (val > fromHour) startTransition(() => setToHour(val));
-        }}
-        className="sibs-filter-input flex-1 bg-slate-50 hover:bg-slate-100 text-xs min-h-[38px] rounded-lg border-slate-200 cursor-pointer"
-      >
-        {HOURS.map((h) => (
-          <option key={`to-${h.value}`} value={h.value} disabled={h.value <= fromHour}>
-            {h.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  </div>
-</div>
-
+      {showDashboardContent ? (
+        <>
       {/* KPI Summary Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="kpi-cards-grid">
         <div className="sibs-page-card-in h-full" style={{ animationDelay: '0ms' }}>
@@ -455,13 +583,13 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="mt-3 min-w-0 flex-1">
-              <h3 className="sibs-section-label truncate">Actual Logged Time</h3>
+              <h3 className="sibs-section-label line-clamp-2 min-h-[2rem] leading-tight">{KPI_HEADERS.actualLoggedTime}</h3>
               <p className="sibs-metric-value text-2xl truncate">
                 {summaryMetrics.loggedFormatted}
               </p>
               <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
-                <span className="truncate">Target: {summaryMetrics.expectedHours}h</span>
-                {renderTrend(summaryMetrics.trends.loggedTime)}
+                <span className="truncate">Target: {formatSeconds(summaryMetrics.expectedSeconds)}</span>
+                {renderTrend(summaryMetrics.trends?.loggedTime ?? 0)}
               </div>
             </div>
           <div className="mt-4 h-12 w-full">
@@ -492,13 +620,13 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Handled Calls</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.handledCalls}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
               <AnimatedNumber value={summaryMetrics.handledCalls} /> Calls
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Target: {summaryMetrics.callsTarget}</span>
-              {renderTrend(summaryMetrics.trends.handledCalls)}
+              {renderTrend(summaryMetrics.trends?.handledCalls ?? 0)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -529,13 +657,13 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Average Talk Time</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.avgTalkTime}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
-              {summaryMetrics.avgTalkTime}s
+              {formatSeconds(summaryMetrics.avgTalkTime)}
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
-              <span className="truncate">Target: {summaryMetrics.talkTarget}s</span>
-              {renderTrend(summaryMetrics.trends.avgTalkTime, true)}
+              <span className="truncate">Target: {formatSeconds(summaryMetrics.talkTarget)}</span>
+              {renderTrend(summaryMetrics.trends?.avgTalkTime ?? 0, true)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -566,13 +694,13 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Average Hold Time</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.avgHoldTime}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
-              {summaryMetrics.avgHoldTime}s
+              {formatSeconds(summaryMetrics.avgHoldTime)}
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
-              <span className="truncate">Target: {summaryMetrics.holdTarget}s</span>
-              {renderTrend(summaryMetrics.trends.avgHoldTime, true)}
+              <span className="truncate">Target: {formatSeconds(summaryMetrics.holdTarget)}</span>
+              {renderTrend(summaryMetrics.trends?.avgHoldTime ?? 0, true)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -603,13 +731,13 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Phone Occupancy</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.phoneOccupancy}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
-              {summaryMetrics.phoneOccupancy}%
+              {formatMetric(summaryMetrics.phoneOccupancy)}%
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
-              <span className="truncate">Avg Working Hours</span>
-              {renderTrend(summaryMetrics.trends.phoneOccupancy)}
+              <span className="truncate">Matched Logged Records</span>
+              {renderTrend(summaryMetrics.trends?.phoneOccupancy ?? 0)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -635,18 +763,18 @@ export default function DashboardPage() {
             </div>
             <div className="text-right">
               <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-50 text-slate-500">
-                Tracked Live
+                Matched Records
               </span>
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Available Email Capacity</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.availableEmailCapacity}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
               <AnimatedNumber value={summaryMetrics.availableEmailCapacity} /> Emails
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Daily Total Slots</span>
-              {renderTrend(summaryMetrics.trends.emailCapacity)}
+              {renderTrend(summaryMetrics.trends?.emailCapacity ?? 0)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -672,18 +800,18 @@ export default function DashboardPage() {
             </div>
             <div className="text-right">
               <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-pink-50 text-pink-600">
-                {summaryMetrics.emailUtilization}% Utilization
+                {formatMetric(summaryMetrics.emailUtilization)}% Utilization
               </span>
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Email Utilization</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.emailUtilization}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
               {summaryMetrics.actualEmails} / {summaryMetrics.targetEmails}
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Target: {summaryMetrics.targetEmails}</span>
-              {renderTrend(summaryMetrics.trends.emailUtilization)}
+              {renderTrend(summaryMetrics.trends?.emailUtilization ?? 0)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -709,18 +837,18 @@ export default function DashboardPage() {
             </div>
             <div className="text-right">
               <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full ${summaryMetrics.actualEfficiency >= 95 ? 'bg-emerald-50 text-emerald-600' : summaryMetrics.actualEfficiency >= 80 ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
-                {summaryMetrics.actualEfficiency}%
+                {formatMetric(summaryMetrics.actualEfficiency)}%
               </span>
             </div>
           </div>
           <div className="mt-3 min-w-0 flex-1">
-            <h3 className="truncate text-[11px] text-slate-500 font-bold font-sans uppercase tracking-wider">Actual Efficiency</h3>
+            <h3 className="line-clamp-2 min-h-[2rem] text-[11px] font-bold uppercase leading-tight tracking-wider text-slate-500 font-sans">{KPI_HEADERS.actualEfficiency}</h3>
             <p className="truncate text-2xl font-black text-slate-900 tracking-tight mt-1 font-sans">
-              {summaryMetrics.actualEfficiency}%
+              {formatMetric(summaryMetrics.actualEfficiency)}%
             </p>
             <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2 font-sans">
               <span className="truncate">Target: 95%</span>
-              {renderTrend(summaryMetrics.trends.efficiency)}
+              {renderTrend(summaryMetrics.trends?.efficiency ?? 0)}
             </div>
           </div>
           <div className="mt-4 h-12 w-full">
@@ -747,7 +875,7 @@ export default function DashboardPage() {
           <div className="sibs-chart-container">
             <h3 className="text-sm font-semibold text-slate-800 mb-4 font-sans flex items-center gap-1.5">
               <Clock className="h-4 w-4 text-blue-500" />
-              Actual Logged Time vs Expected Hours (Hours)
+              {KPI_HEADERS.actualLoggedTime} vs {KPI_HEADERS.expectedHours}
             </h3>
             <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -791,7 +919,7 @@ export default function DashboardPage() {
                   fontFamily: 'sans-serif',
                   color: '#fff'
                 }} />
-                  <Area type="monotone" dataKey="Expected Hours" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="4 4" fillOpacity={1} fill="url(#expectedColor)" />
+                  <Area type="monotone" dataKey="Expected Seconds" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="4 4" fillOpacity={1} fill="url(#expectedColor)" />
                   <Area type="monotone" dataKey="Logged Time" stroke="#2563eb" strokeWidth={2.5} fillOpacity={1} fill="url(#loggedColor)" dot={{ r: 4, strokeWidth: 2 }}>
                     <LabelList dataKey="Logged Time" position="top" offset={10} style={{ fontSize: '10px', fontWeight: 'bold', fill: '#2563eb' }} />
                   </Area>
@@ -804,7 +932,7 @@ export default function DashboardPage() {
           <div className="sibs-chart-container">
             <h3 className="text-sm font-semibold text-slate-800 mb-4 font-sans flex items-center gap-1.5">
               <Phone className="h-4 w-4 text-emerald-500" />
-              Handled Calls (Actual vs Target)
+              {KPI_HEADERS.handledCalls} (Actual vs Target)
             </h3>
             <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -864,7 +992,7 @@ export default function DashboardPage() {
           <div className="sibs-chart-container">
             <h3 className="text-sm font-semibold text-slate-800 mb-4 font-sans flex items-center gap-1.5">
               <Zap className="h-4 w-4 text-violet-500" />
-              Average Talk Time vs Average Hold Time (Seconds)
+              {KPI_HEADERS.avgTalkTime} vs {KPI_HEADERS.avgHoldTime} (Seconds)
             </h3>
             <LazyChartMount heightClass="h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -922,7 +1050,7 @@ export default function DashboardPage() {
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
             <h3 className="text-sm font-semibold text-slate-800 mb-2 font-sans flex items-center gap-1.5">
               <Percent className="h-4 w-4 text-sky-500" />
-              Phone Occupancy State Allocation
+              {KPI_HEADERS.phoneOccupancy} State Allocation
             </h3>
             <div className="relative flex items-center justify-center h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -944,7 +1072,7 @@ export default function DashboardPage() {
               </ResponsiveContainer>
               {/* Central Text */}
               <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
-                <span className="text-4xl font-extrabold font-mono text-slate-600 tracking-tighter">{summaryMetrics.phoneOccupancy}%</span>
+                <span className="text-4xl font-extrabold font-mono text-slate-600 tracking-tighter">{formatMetric(summaryMetrics.phoneOccupancy)}%</span>
                 <span className="text-[10px] font-bold px-3 py-1 rounded-full mt-1.5 shadow-sm transition-colors bg-sky-100 text-sky-700 ring-1 ring-sky-200 uppercase">
                   Occupied
                 </span>
@@ -1028,7 +1156,7 @@ export default function DashboardPage() {
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between group/gauge">
             <h3 className="text-sm font-semibold text-slate-800 mb-2 font-sans flex items-center gap-1.5">
               <Award className="h-4 w-4 text-amber-500" />
-              Actual Productive Efficiency
+              {KPI_HEADERS.actualEfficiency}
             </h3>
             <div className="flex flex-col items-center justify-center pt-2 pb-2 w-full">
               {(() => {
@@ -1067,7 +1195,7 @@ export default function DashboardPage() {
               })()}
               
               <div className="flex flex-col items-center -mt-8 z-10">
-                <span className="text-4xl font-extrabold font-mono text-slate-600 tracking-tighter">{summaryMetrics.actualEfficiency}%</span>
+                <span className="text-4xl font-extrabold font-mono text-slate-600 tracking-tighter">{formatMetric(summaryMetrics.actualEfficiency)}%</span>
                 <span className={`text-[10px] font-bold px-3 py-1 rounded-full mt-1.5 shadow-sm transition-colors ${summaryMetrics.actualEfficiency >= 95 ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200' : summaryMetrics.actualEfficiency >= 80 ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-200' : 'bg-red-100 text-red-700 ring-1 ring-red-200'}`}>
                   {summaryMetrics.actualEfficiency >= 95 ? 'EXCELLENT' : summaryMetrics.actualEfficiency >= 80 ? 'NEEDS ATTENTION' : 'ACTION REQUIRED'}
                 </span>
@@ -1097,13 +1225,13 @@ export default function DashboardPage() {
       {teamInsights && <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200" id="team-insights-container">
           <h3 className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
             <BarChart3 className="h-4 w-4 text-slate-500" />
-            Automated Operational Team Insights
+            Matched Operational Team Insights
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm min-w-0">
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Highest Performing</p>
               <p className="text-xs font-bold text-slate-800 truncate mt-1">{teamInsights.highestEffName}</p>
-              <p className="truncate text-lg font-bold font-mono text-emerald-600 mt-1">{teamInsights.highestEffVal}%</p>
+              <p className="truncate text-lg font-bold font-mono text-emerald-600 mt-1">{formatMetric(teamInsights.highestEffVal)}%</p>
             </div>
 
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm min-w-0">
@@ -1115,21 +1243,23 @@ export default function DashboardPage() {
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm min-w-0">
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Highest Occupancy</p>
               <p className="truncate text-xs font-bold text-slate-800 mt-1">Peak Occupancy</p>
-              <p className="truncate text-lg font-bold font-mono text-indigo-600 mt-1">{teamInsights.highestOccupancy}%</p>
-            </div>
+              <p className="truncate text-lg font-bold font-mono text-indigo-600 mt-1">{formatMetric(teamInsights.highestOccupancy)}%</p>
+            </div> 
 
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm min-w-0">
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Lowest Efficiency</p>
               <p className="truncate text-xs font-bold text-slate-800 mt-1">Needs Coaching</p>
-              <p className="truncate text-lg font-bold font-mono text-red-500 mt-1">{teamInsights.lowestEfficiency}%</p>
+              <p className="truncate text-lg font-bold font-mono text-red-500 mt-1">{formatMetric(teamInsights.lowestEfficiency)}%</p>
             </div>
 
             <div className="bg-white p-3.5 rounded-xl border border-slate-200/60 shadow-sm sm:col-span-2 lg:col-span-1 min-w-0">
               <p className="truncate text-[10px] font-sans text-slate-400 font-medium">Team Avg Efficiency</p>
               <p className="truncate text-xs font-bold text-slate-800 mt-1">Operational Benchmark</p>
-              <p className="truncate text-lg font-bold font-mono text-slate-700 mt-1">{teamInsights.teamAverage}%</p>
+              <p className="truncate text-lg font-bold font-mono text-slate-700 mt-1">{formatMetric(teamInsights.teamAverage)}%</p>
             </div>
           </div>
         </div>}
+        </>
+      ) : null}
     </div>;
 }
