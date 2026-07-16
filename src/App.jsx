@@ -1,13 +1,24 @@
-
+import { useLocation } from "react-router-dom";
 import AppShell from "./AppShell";
 import Router from "./router";
+import AuthSessionWatcher from "./components/AuthSessionWatcher";
 
-function App() {
+export default function App() {
+  const location = useLocation();
+
+  const isLoginPage = location.pathname === "/login";
+
   return (
-    <AppShell>
-      <Router />
-    </AppShell>
+    <>
+      <AuthSessionWatcher />
+
+      {isLoginPage ? (
+        <Router />
+      ) : (
+        <AppShell>
+          <Router />
+        </AppShell>
+      )}
+    </>
   );
 }
-
-export default App;
